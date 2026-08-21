@@ -48,8 +48,10 @@ def main() -> int:
         files = selected_files()
         errors = scan(files)
         if errors:
-            for error in errors:
-                print(f"ERROR: {error}", file=sys.stderr)
+            print(
+                f"Public release blocked: {len(errors)} privacy issue(s) detected.",
+                file=sys.stderr,
+            )
             return 1
         output.parent.mkdir(parents=True, exist_ok=True)
         if output.exists():
