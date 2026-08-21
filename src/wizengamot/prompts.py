@@ -62,4 +62,10 @@ def build_task_prompt(agent: AgentRecord, task: str, campaign_prompt: str | None
 def load_output_schema(root: Path) -> dict:
     config = load_workspace_config(root)
     schema = json.loads((root / config.output_schema).read_text(encoding="utf-8"))
+
+    # Claude Code's structured-output validator currently rejects an explicit
+    # JSON Schema Draft 2020-12 dialect marker. Keep the canonical schema file
+    # standards-compliant and normalize only the in-memory copy sent to Claude.
+    schema.pop("$schema", None)
+
     return {"type": "json_schema", "schema": schema}
