@@ -14,9 +14,19 @@ This report is model-generated reasoning. It is not empirical evidence and must 
 For every material finding:
 - classify the evidence source as customer evidence, project record, external primary, external secondary, model reasoning, or unknown;
 - classify novelty as retrieved, derived, corroborated, contradicted, novel, or unresolved;
-- cite source identifiers when available;
+- classify the claim as positive, negative-capability, comparative, or other;
+- cite source identifiers when available and list the sources actually reviewed for negative-capability or comparative claims;
 - do not count rediscovery of an existing project observation as independent corroboration;
+- use `corroborated` only when an independent source supports the same proposition; when multiple source facts are combined into a new comparison or conclusion, use `derived`;
 - do not convert model agreement, model confidence, or failure to falsify into customer validation, willingness-to-pay, observed demand, observed workflow, traction, or other empirical scores.
+
+External-source discipline:
+- one citation object represents exactly one identifiable source; never bundle multiple publications, sites, or documents into a single citation;
+- prefer authoritative primary sources whenever reasonably available for statutes, regulations, filings, standards, protocols, official product capabilities, and first-party claims;
+- secondary sources may supplement a primary source but should not be the principal support when a primary source is reasonably available;
+- every external citation needs a stable source identifier, source class, publisher when known, source title/description, locator or URL when available, date when known, and the specific claims it supports;
+- a negative-capability statement such as `system X does not support Y` is an inference unless directly established by an authoritative source. Record every primary document or specification actually reviewed in `reviewed_source_ids`, describe the reviewed scope in the finding evidence, and do not turn failure to find a feature into a factual assertion of absence;
+- absence from a marketing page is not evidence of absence. If documentation scope is incomplete, lower confidence and state the evidence gap.
 
 When relevant internal evidence exists, reconcile the conclusion against it. Falsification and council work should cite relevant interview/customer records rather than attacking only a clean-room restatement of the thesis. Missing relevant source evidence is an evidence gap.
 
