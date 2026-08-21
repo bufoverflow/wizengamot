@@ -43,6 +43,31 @@ class PrivacyTests(unittest.TestCase):
             path.unlink(missing_ok=True)
 
 
+    def test_forbidden_term_is_not_echoed_in_diagnostics(self):
+        path = ROOT / "tests" / "synthetic-forbidden.tmp"
+        sensitive_term = "synthetic-private-project-fingerprint"
+
+        try:
+            path.write_text(f"contains {sensitive_term}\n")
+
+            with mock.patch.object(
+                privacy_check,
+                "load_forbidden_terms",
+                return_value=[sensitive_term],
+            ):
+                errors = privacy_check.scan([path])
+
+            self.assertTrue(
+                any("contains locally forbidden content" in error for error in errors),
+                errors,
+            )
+            self.assertFalse(
+                any(sensitive_term in error for error in errors),
+                errors,
+            )
+        finally:
+            path.unlink(missing_ok=True)
+
     def test_staged_scan_reads_index_blob_not_working_tree(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
