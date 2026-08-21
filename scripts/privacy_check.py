@@ -125,8 +125,7 @@ def read_staged_bytes(path: Path) -> bytes:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            result.stderr.decode("utf-8", errors="replace").strip()
-            or f"could not read staged content for {rel}"
+            f"could not read staged content for {rel}"
         )
     return result.stdout
 
@@ -165,7 +164,7 @@ def scan(paths: list[Path], *, staged: bool = False) -> list[str]:
         for term in terms:
             if term.casefold() in lower:
                 errors.append(
-                    f"{rel}: contains locally forbidden term {term!r}"
+                    f"{rel}: contains locally forbidden content"
                 )
 
     return sorted(set(errors))
