@@ -23,18 +23,39 @@ The source evidence contained in a report may be evidence. The report is not evi
 
 Model reasoning cannot increase customer-validation, willingness-to-pay, observed-demand, observed-workflow, or traction scores. A primary source surfaced by a model can update a factual claim after the source is checked; the model synthesis does not create a second source.
 
+## Source provenance contract
+
+External citations are atomic. One citation object represents one identifiable source. Do not bundle multiple publications, sites, or documents into one source identifier.
+
+Prefer authoritative primary sources whenever reasonably available for statutes, regulations, filings, standards, protocols, official product capabilities, and first-party claims. Secondary sources may supplement those records but should not substitute for an available primary source.
+
+Each citation records:
+
+- a stable `source_id`;
+- `source_class`;
+- publisher when known;
+- source title or description;
+- a locator or URL when available;
+- date when known;
+- whether it is primary;
+- the specific claims it supports.
+
+Each material finding also classifies its claim as `positive`, `negative-capability`, `comparative`, or `other`.
+
+Negative-capability claims require explicit scope accounting. Saying that a system does not support a capability is an inference unless an authoritative source directly establishes that absence. The finding must list the primary documents or specifications actually reviewed in `reviewed_source_ids`, describe the reviewed scope in its evidence, lower confidence when documentation is incomplete, and record the remaining evidence gap. Absence from a marketing page is not evidence of absence.
+
 ## Novelty accounting
 
 Each material finding should classify its relationship to the supplied corpus:
 
 - `retrieved`: already explicit in the corpus;
 - `derived`: a logical implication of supplied evidence;
-- `corroborated`: supported by an additional independent source;
+- `corroborated`: supported by an additional independent source that supports the same proposition;
 - `contradicted`: conflicts with another source or project record;
 - `novel`: absent from the reviewed corpus and introduced as a new hypothesis or inference;
 - `unresolved`: available evidence does not justify choosing.
 
-Re-deriving an existing observation does not create independent confirmation.
+Re-deriving an existing observation does not create independent confirmation. Combining facts from multiple sources into a new comparison or conclusion is `derived`, not automatically `corroborated`.
 
 ## Evidence reconciliation
 

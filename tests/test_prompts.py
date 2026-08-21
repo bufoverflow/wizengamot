@@ -30,13 +30,34 @@ class PromptTests(unittest.TestCase):
         canonical_after = json.loads(schema_path.read_text(encoding="utf-8"))
         self.assertEqual(canonical_after, canonical)
 
-    def test_schema_requires_epistemic_and_action_fields(self):
+    def test_schema_requires_epistemic_action_and_source_fields(self):
         schema = load_output_schema(ATLAS)["schema"]
         required = set(schema["required"])
         self.assertTrue({"epistemic_notice", "actions", "evidence_bar_review"} <= required)
 
-        finding_required = set(schema["properties"]["findings"]["items"]["required"])
-        self.assertTrue({"evidence_class", "novelty", "source_ids"} <= finding_required)
+        finding = schema["properties"]["findings"]["items"]
+        finding_required = set(finding["required"])
+        self.assertTrue(
+            {"evidence_class", "novelty", "claim_type", "source_ids", "reviewed_source_ids"}
+            <= finding_required
+        )
+        self.assertEqual(
+            set(finding["properties"]["claim_type"]["enum"]),
+            {"positive", "negative-capability", "comparative", "other"},
+        )
+
+        citation = schema["properties"]["citations"]["items"]
+        citation_required = set(citation["required"])
+        self.assertTrue(
+            {
+                "source_id",
+                "source_class",
+                "publisher",
+                "locator",
+                "claims_supported",
+            }
+            <= citation_required
+        )
 
     def test_system_prompt_enforces_epistemic_governance(self):
         agent = next(
@@ -50,6 +71,20 @@ class PromptTests(unittest.TestCase):
         self.assertIn("Every complete or partial report should terminate", prompt)
         self.assertIn("Match the evidence bar to reversibility", prompt)
         self.assertIn("cite relevant interview/customer records", prompt)
+
+    def test_system_prompt_enforces_source_provenance(self):
+        agent = next(
+            agent for agent in load_agents(ATLAS)
+            if agent.name == "atlas-research-quality-falsification-agent"
+        )
+        prompt = build_system_prompt(ATLAS, agent)
+
+        self.assertIn("one citation object represents exactly one identifiable source", prompt)
+        self.assertIn("prefer authoritative primary sources", prompt)
+        self.assertIn("negative-capability statement", prompt)
+        self.assertIn("absence from a marketing page is not evidence of absence", prompt)
+        self.assertIn("use `corroborated` only when an independent source supports the same proposition", prompt)
+        self.assertIn("use `derived`", prompt)
 
 
 if __name__ == "__main__":
