@@ -66,6 +66,11 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             structured_output = {
                 "agent_name": agent.name,
                 "status": "complete",
+                "epistemic_notice": {
+                    "model_generated": True,
+                    "report_is_evidence": False,
+                    "moves_empirical_validation": False,
+                },
                 "executive_summary": "synthetic",
                 "findings": [],
                 "risks": [],
@@ -73,6 +78,24 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                 "recommendations": [],
                 "evidence_gaps": [],
                 "citations": [],
+                "actions": [
+                    {
+                        "description": "Interview an external operator",
+                        "owner": "founder",
+                        "target_date": "2026-08-22",
+                        "action_type": "external",
+                        "reversibility": "reversible",
+                        "evidence_bar": "near-zero",
+                        "rationale": "The interview itself generates the missing evidence.",
+                    }
+                ],
+                "evidence_bar_review": {
+                    "current_threshold": "near-zero",
+                    "prior_threshold": None,
+                    "drift_direction": "unknown",
+                    "drift_basis": "unknown",
+                    "recommendation": "Act and gather external evidence.",
+                },
                 "handoff": [],
             }
             result = None
@@ -113,6 +136,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["env"]["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"], "1")
         self.assertEqual(captured["env"]["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"], "1")
         self.assertEqual(payload["result"]["report"]["agent_name"], agent.name)
+        self.assertFalse(payload["result"]["report"]["epistemic_notice"]["report_is_evidence"])
 
     async def test_retry_history_cost_and_successful_resume_skip(self):
         agent = next(

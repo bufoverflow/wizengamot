@@ -66,6 +66,8 @@
 **/legal/private/
 **/fundraising/private/
 **/outreach/private/
+**/.wizengamot-analysis-state.json
+**/action-ledger.jsonl
 *.log
 *.jsonl
 *.trace

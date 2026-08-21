@@ -10,6 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 from .activation import activate, clear_activated
+from .governance import analysis_guard_blocked, note_analysis_run, record_external_action
 from .models import LaunchPlan
 from .registry import load_agents, load_campaign, select_agents, select_campaign
 from .runner import DENIED_TOOLS, READ_ONLY_TOOLS, launch_plan, make_run_id
@@ -18,6 +19,7 @@ from .workspace import load_workspace_config, resolve_workspace
 
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 LARGE_RUN_THRESHOLD = 100
+ANALYSIS_EXEMPTIONS = ["calibration", "runtime-debug", "incident-recovery"]
 
 
 def add_selectors(parser: argparse.ArgumentParser) -> None:
@@ -91,6 +93,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("validate", help="Validate the workspace, agents, context, schema, and campaigns")
     sub.add_parser("count", help="Count agents by tier")
 
+    p_record = sub.add_parser(
+        "record-action",
+        help="Record a completed external action and reset the optional analysis-loop guard",
+    )
+    p_record.add_argument("--description", required=True)
+    p_record.add_argument("--owner", required=True)
+    p_record.add_argument("--occurred-at")
+
     p_list = sub.add_parser("list", help="List agents")
     p_list.add_argument("--campaign")
     add_selectors(p_list)
@@ -124,6 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_launch.add_argument("--ack-large-run", type=int)
     p_launch.add_argument("--unsafe-high-concurrency", action="store_true")
     p_launch.add_argument("--no-skip-existing", action="store_true")
+    p_launch.add_argument(
+        "--analysis-exempt",
+        choices=ANALYSIS_EXEMPTIONS,
+        help="Exclude a calibration/debugging run from the optional analysis-loop counter",
+    )
 
     sub.add_parser(
         "sdk-check",
@@ -140,6 +155,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Workspace error: {exc}", file=sys.stderr)
         return 2
 
+    if args.command == "record-action":
+        record = record_external_action(
+            root,
+            description=args.description.strip(),
+            owner=args.owner.strip(),
+            occurred_at=(args.occurred_at.strip() if args.occurred_at else None),
+        )
+        print(json.dumps(record, indent=2))
+        return 0
+
     if args.command == "workspace":
         config = load_workspace_config(root)
         print(json.dumps({
@@ -150,6 +175,10 @@ def main(argv: list[str] | None = None) -> int:
             "expected_counts": config.expected_counts,
             "audit_campaign": config.audit_campaign,
             "audit_worker_count": config.audit_worker_count,
+            "analysis_loop_guard": {
+                "enabled": config.analysis_loop_guard_enabled,
+                "max_consecutive_runs": config.analysis_loop_max_consecutive_runs,
+            },
         }, indent=2))
         return 0
 
@@ -343,6 +372,25 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    config = load_workspace_config(root)
+    if config.analysis_loop_guard_enabled and not args.analysis_exempt:
+        blocked, count = analysis_guard_blocked(
+            root,
+            max_consecutive_runs=config.analysis_loop_max_consecutive_runs,
+        )
+        if blocked:
+            print(
+                "Analysis-loop guard blocked this live run: "
+                f"{count} consecutive successful analysis runs have occurred since the last recorded external action. "
+                "Perform a real-world action and record it with `wizengamot record-action`, or use "
+                "`--analysis-exempt calibration|runtime-debug|incident-recovery` only when the run genuinely tests the harness.",
+                file=sys.stderr,
+            )
+            return 2
+    elif args.analysis_exempt:
+        print(f"Analysis-loop guard exemption: {args.analysis_exempt}")
+
     run_dir = root / "runs" / run_id
     plan = LaunchPlan(
         agents=tuple(selected),
@@ -365,6 +413,19 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Launch failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
+
+    if (
+        summary["failed"] == 0
+        and config.analysis_loop_guard_enabled
+        and not args.analysis_exempt
+    ):
+        state = note_analysis_run(root)
+        print(
+            "Analysis-loop state: "
+            f"{state['consecutive_analysis_runs']}/{config.analysis_loop_max_consecutive_runs} "
+            "successful analysis runs since the last recorded external action."
+        )
+
     print(json.dumps(summary, indent=2))
     return 0 if summary["failed"] == 0 else 1
 

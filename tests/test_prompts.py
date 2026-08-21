@@ -4,7 +4,8 @@ import json
 import unittest
 from pathlib import Path
 
-from wizengamot.prompts import load_output_schema
+from wizengamot.prompts import build_system_prompt, load_output_schema
+from wizengamot.registry import load_agents
 
 ROOT = Path(__file__).resolve().parents[1]
 ATLAS = ROOT / "examples" / "atlas"
@@ -28,6 +29,27 @@ class PromptTests(unittest.TestCase):
         # Runtime normalization must not mutate the canonical schema on disk.
         canonical_after = json.loads(schema_path.read_text(encoding="utf-8"))
         self.assertEqual(canonical_after, canonical)
+
+    def test_schema_requires_epistemic_and_action_fields(self):
+        schema = load_output_schema(ATLAS)["schema"]
+        required = set(schema["required"])
+        self.assertTrue({"epistemic_notice", "actions", "evidence_bar_review"} <= required)
+
+        finding_required = set(schema["properties"]["findings"]["items"]["required"])
+        self.assertTrue({"evidence_class", "novelty", "source_ids"} <= finding_required)
+
+    def test_system_prompt_enforces_epistemic_governance(self):
+        agent = next(
+            agent for agent in load_agents(ATLAS)
+            if agent.name == "atlas-research-quality-falsification-agent"
+        )
+        prompt = build_system_prompt(ATLAS, agent)
+
+        self.assertIn("This report is model-generated reasoning", prompt)
+        self.assertIn("do not count rediscovery", prompt)
+        self.assertIn("Every complete or partial report should terminate", prompt)
+        self.assertIn("Match the evidence bar to reversibility", prompt)
+        self.assertIn("cite relevant interview/customer records", prompt)
 
 
 if __name__ == "__main__":

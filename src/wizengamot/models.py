@@ -78,9 +78,13 @@ class WorkspaceConfig:
     output_schema: str
     instruction_files: tuple[str, ...]
     required_context: tuple[str, ...]
+    analysis_loop_guard_enabled: bool
+    analysis_loop_max_consecutive_runs: int
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "WorkspaceConfig":
+        raw_guard = value.get("analysis_loop_guard", {})
+        guard = raw_guard if isinstance(raw_guard, dict) else {}
         return cls(
             name=str(value["name"]),
             display_name=str(value.get("display_name", value["name"])),
@@ -100,6 +104,8 @@ class WorkspaceConfig:
             output_schema=str(value.get("output_schema", "schemas/agent-result.schema.json")),
             instruction_files=tuple(str(x) for x in value.get("instruction_files", ["CLAUDE.md"])),
             required_context=tuple(str(x) for x in value.get("required_context", [])),
+            analysis_loop_guard_enabled=bool(guard.get("enabled", False)),
+            analysis_loop_max_consecutive_runs=max(1, int(guard.get("max_consecutive_runs", 2))),
         )
 
 
