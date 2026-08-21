@@ -37,13 +37,38 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["statement", "classification", "evidence_class", "novelty", "source_ids", "confidence", "impact", "evidence"],
+        "required": [
+          "statement",
+          "classification",
+          "evidence_class",
+          "novelty",
+          "claim_type",
+          "source_ids",
+          "reviewed_source_ids",
+          "confidence",
+          "impact",
+          "evidence"
+        ],
         "properties": {
           "statement": {"type": "string"},
-          "classification": {"type": "string", "enum": ["fact", "project-record", "hypothesis", "inference", "recommendation", "legal-question", "unknown"]},
-          "evidence_class": {"type": "string", "enum": ["customer-evidence", "project-record", "external-primary", "external-secondary", "model-reasoning", "unknown"]},
-          "novelty": {"type": "string", "enum": ["retrieved", "derived", "corroborated", "contradicted", "novel", "unresolved"]},
-          "source_ids": {"type": "array", "items": {"type": "string"}},
+          "classification": {
+            "type": "string",
+            "enum": ["fact", "project-record", "hypothesis", "inference", "recommendation", "legal-question", "unknown"]
+          },
+          "evidence_class": {
+            "type": "string",
+            "enum": ["customer-evidence", "project-record", "external-primary", "external-secondary", "model-reasoning", "unknown"]
+          },
+          "novelty": {
+            "type": "string",
+            "enum": ["retrieved", "derived", "corroborated", "contradicted", "novel", "unresolved"]
+          },
+          "claim_type": {
+            "type": "string",
+            "enum": ["positive", "negative-capability", "comparative", "other"]
+          },
+          "source_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "reviewed_source_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
           "confidence": {"type": "string", "enum": ["high", "moderate", "low", "unknown"]},
           "impact": {"type": "string"},
           "evidence": {"type": "array", "items": {"type": "string"}}
@@ -59,12 +84,30 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["label", "source", "date", "primary"],
+        "required": [
+          "source_id",
+          "label",
+          "source_class",
+          "publisher",
+          "source",
+          "locator",
+          "date",
+          "primary",
+          "claims_supported"
+        ],
         "properties": {
+          "source_id": {"type": "string"},
           "label": {"type": "string"},
+          "source_class": {
+            "type": "string",
+            "enum": ["customer-evidence", "project-record", "external-primary", "external-secondary", "unknown"]
+          },
+          "publisher": {"type": ["string", "null"]},
           "source": {"type": "string"},
+          "locator": {"type": ["string", "null"]},
           "date": {"type": ["string", "null"]},
-          "primary": {"type": ["boolean", "null"]}
+          "primary": {"type": ["boolean", "null"]},
+          "claims_supported": {"type": "array", "items": {"type": "string"}}
         }
       }
     },
