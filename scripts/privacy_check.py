@@ -193,8 +193,10 @@ def main() -> int:
         return 2
 
     if errors:
-        for error in errors:
-            print(f"ERROR: {error}", file=sys.stderr)
+        print(
+            f"Privacy check failed: {len(errors)} issue(s) detected.",
+            file=sys.stderr,
+        )
         return 1
     print(f"Privacy check passed for {len(paths)} files.")
     return 0
