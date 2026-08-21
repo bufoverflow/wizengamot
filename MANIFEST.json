@@ -1,0 +1,9 @@
+{
+  "project": "Wizengamot",
+  "version": "0.2.0",
+  "public_example": "examples/atlas",
+  "python": ">=3.11",
+  "claude_agent_sdk": ">=0.2.143,<0.3",
+  "privacy_model": "public engine plus ignored local workspace",
+  "generated_at": "2026-08-20"
+}

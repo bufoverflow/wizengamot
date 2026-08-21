@@ -1,0 +1,194 @@
+# ---------------------------------------------------------------------------
+# Private project corpus and local workspaces
+# ---------------------------------------------------------------------------
+/workspace/
+/workspaces/private/
+/private/
+/.private/
+/overlays/private/
+/docs/private/
+/data/private/
+
+# Knowledge is always local. The public example uses context/ instead.
+/knowledge/
+**/knowledge/
+
+# Local project configuration and private policy overlays
+/wizengamot.local.toml
+/wizengamot.local.json
+/privacy-policy.local.json
+*.private.toml
+*.private.json
+*.local.toml
+
+# Private agent and campaign overlays
+**/agent-library/private/
+**/registry/private/
+**/campaigns/private/
+**/tasks/private/
+**/.claude/agents/private/
+
+# ---------------------------------------------------------------------------
+# Claude-local state and connector configuration
+# ---------------------------------------------------------------------------
+**/.claude/agents/activated/*
+!**/.claude/agents/activated/.gitkeep
+**/.claude/settings.local.json
+**/.claude/*.local.json
+**/.claude/projects/
+**/.claude/agent-memory*/
+**/.claude/history/
+**/.claude/session-env/
+**/.claude/transcripts/
+**/.claude/debug/
+.mcp.json
+.mcp.local.json
+**/.mcp.json
+**/.mcp.local.json
+
+# ---------------------------------------------------------------------------
+# Runtime output, model transcripts, generated artifacts, and local evidence
+# ---------------------------------------------------------------------------
+**/runs/*
+!**/runs/.gitkeep
+**/work/*
+!**/work/.gitkeep
+**/artifacts/
+**/reports/
+**/logs/
+**/traces/
+**/transcripts/
+**/uploads/
+**/attachments/
+**/exports/
+**/evidence/private/
+**/customer-data/
+**/legal/private/
+**/fundraising/private/
+**/outreach/private/
+*.log
+*.jsonl
+*.trace
+*.har
+*.pcap
+*.pcapng
+*.sqlite
+*.sqlite3
+*.db
+
+# ---------------------------------------------------------------------------
+# Credentials, tokens, key material, signing material, and cloud state
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.der
+*.csr
+*.mobileprovision
+id_rsa*
+id_ed25519*
+credentials.json
+credentials*.json
+*_credentials.json
+secrets.json
+secrets*.json
+*_secrets.json
+service-account*.json
+*service_account*.json
+kubeconfig
+.kube/
+.aws/
+.gcp/
+.azure/
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.auto.tfvars
+
+# ---------------------------------------------------------------------------
+# Python, test, build, packaging, and editor state
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+release/
+*.whl
+*.tar.gz
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Local authentication stores, package credentials, and AI assistant state
+# ---------------------------------------------------------------------------
+.claude.json
+.claude.json.backup
+.cursor/
+.windsurf/
+.codex/
+.netrc
+.npmrc
+.pypirc
+.git-credentials
+.docker/config.json
+auth.json
+oauth*.json
+token.json
+tokens.json
+cookies.json
+session.json
+*.kdbx
+*.age
+*.gpg
+
+# ---------------------------------------------------------------------------
+# Private documents, mail/calendar exports, backups, and database dumps
+# ---------------------------------------------------------------------------
+/README.internal.md
+**/*.private.*
+**/*.confidential.*
+**/*.sensitive.*
+**/*.internal.md
+*.eml
+*.mbox
+*.pst
+*.ost
+*.ics
+*.vcf
+*.sql
+*.dump
+*.bak
+*.backup
+*.orig
+*.rej
+
+# ---------------------------------------------------------------------------
+# Other language/package caches
+# ---------------------------------------------------------------------------
+node_modules/
+.npm/
+.yarn/
+.pnpm-store/

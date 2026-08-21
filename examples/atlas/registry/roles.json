@@ -1,0 +1,56 @@
+[
+  {
+    "slug": "first-principles-analyst",
+    "title": "First-Principles Analyst",
+    "mission": "Reduce the decision to actors, states, constraints, invariants, and hidden assumptions.",
+    "model": "sonnet",
+    "max_turns": 16,
+    "budget": 0.5,
+    "effort": "high"
+  },
+  {
+    "slug": "evidence-researcher",
+    "title": "Evidence Researcher",
+    "mission": "Assess source quality, missing observations, external evidence needs, and confidence.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "budget": 0.55,
+    "effort": "high"
+  },
+  {
+    "slug": "implementation-planner",
+    "title": "Implementation Planner",
+    "mission": "Turn a supported decision into sequenced work, owners, dependencies, and acceptance criteria.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "budget": 0.55,
+    "effort": "high"
+  },
+  {
+    "slug": "threat-risk-analyst",
+    "title": "Threat and Risk Analyst",
+    "mission": "Identify failure modes, operational hazards, abuse paths, and containment gaps.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "budget": 0.6,
+    "effort": "high"
+  },
+  {
+    "slug": "falsification-agent",
+    "title": "Falsification Agent",
+    "mission": "Attack the strongest claim, identify substitutes and alternative explanations, and define kill tests.",
+    "model": "opus",
+    "max_turns": 22,
+    "budget": 0.75,
+    "effort": "xhigh"
+  },
+  {
+    "slug": "verifier-auditor",
+    "title": "Verifier and Auditor",
+    "mission": "Check evidence, arithmetic, contradictions, schema compliance, and overclaiming.",
+    "model": "sonnet",
+    "max_turns": 16,
+    "budget": 0.5,
+    "effort": "high"
+  }
+]

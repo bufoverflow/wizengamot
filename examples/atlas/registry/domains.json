@@ -1,0 +1,12 @@
+[
+  {
+    "slug": "research-quality",
+    "title": "Research Quality",
+    "mission": "Determine whether the evidence supports a pilot decision and which observations remain missing."
+  },
+  {
+    "slug": "delivery-reliability",
+    "title": "Delivery Reliability",
+    "mission": "Determine whether deployment, operations, recovery, and ownership are sufficiently controlled for a pilot."
+  }
+]

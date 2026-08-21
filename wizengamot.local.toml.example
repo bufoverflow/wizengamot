@@ -1,0 +1,2 @@
+# Copy to wizengamot.local.toml. The copied file is gitignored.
+workspace = "workspace"

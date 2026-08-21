@@ -1,0 +1,1 @@
+Assess whether Atlas should proceed to a six-week limited field pilot. Evaluate evidence quality, operational readiness, recovery, ownership, measurable acceptance criteria, and decisive reasons to delay. Preserve provenance and separate project records, facts, hypotheses, inferences, and recommendations.

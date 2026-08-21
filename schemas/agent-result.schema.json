@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wizengamot agent report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent_name",
+    "status",
+    "executive_summary",
+    "findings",
+    "risks",
+    "falsifiers",
+    "recommendations",
+    "evidence_gaps",
+    "citations",
+    "handoff"
+  ],
+  "properties": {
+    "agent_name": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "blocked"
+      ]
+    },
+    "executive_summary": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statement",
+          "classification",
+          "confidence",
+          "impact",
+          "evidence"
+        ],
+        "properties": {
+          "statement": {
+            "type": "string"
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "project-record",
+              "hypothesis",
+              "inference",
+              "recommendation",
+              "legal-question",
+              "unknown"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "high",
+              "moderate",
+              "low",
+              "unknown"
+            ]
+          },
+          "impact": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "falsifiers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "source",
+          "date",
+          "primary"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "primary": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "handoff": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "artifact_markdown": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decision_log": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source_report_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

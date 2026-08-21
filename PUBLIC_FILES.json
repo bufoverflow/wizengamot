@@ -1,0 +1,35 @@
+{
+  "include": [
+    ".claude/agents/framework-maintainer.md",
+    ".claude/settings.json",
+    ".claude/skills",
+    ".env.example",
+    ".gitattributes",
+    ".gitignore",
+    ".github",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "MANIFEST.json",
+    "Makefile",
+    "NOTICE.md",
+    "PUBLIC_FILES.json",
+    "README.md",
+    "SECURITY.md",
+    "docs",
+    "examples",
+    "pyproject.toml",
+    "schemas",
+    "scripts",
+    "src",
+    "tests",
+    "wizengamot.local.toml.example"
+  ],
+  "exclude": [
+    "**/runs/**",
+    "**/work/**",
+    "**/.claude/agents/activated/**",
+    "**/__pycache__/**",
+    "**/*.pyc"
+  ]
+}

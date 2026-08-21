@@ -1,0 +1,24 @@
+{
+  "name": "atlas",
+  "display_name": "Atlas Field Study",
+  "description": "Fictional example workspace for testing evidence quality and delivery reliability.",
+  "expected_counts": {
+    "chief": 1,
+    "director": 2,
+    "specialist": 12,
+    "council": 1,
+    "synthesis": 1
+  },
+  "default_interactive_count": 3,
+  "audit_campaign": "full-audit",
+  "audit_worker_count": 15,
+  "output_schema": "schemas/agent-result.schema.json",
+  "instruction_files": [
+    "CLAUDE.md"
+  ],
+  "required_context": [
+    "context/INDEX.md",
+    "context/project-brief.md",
+    "context/claims.json"
+  ]
+}

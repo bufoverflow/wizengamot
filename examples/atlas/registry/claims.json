@@ -1,0 +1,21 @@
+[
+  {
+    "id": "A-001",
+    "claim": "The prototype is ready for a six-week limited field pilot.",
+    "status": "hypothesis",
+    "falsifiers": [
+      "Recovery cannot be completed remotely after network loss.",
+      "Power consumption exceeds the field battery budget.",
+      "The operator cannot diagnose the top three failure modes from the runbook."
+    ]
+  },
+  {
+    "id": "A-002",
+    "claim": "The planned evidence is sufficient to make a pilot decision.",
+    "status": "hypothesis",
+    "falsifiers": [
+      "Laboratory conditions omit a material field failure mode.",
+      "Success criteria cannot be measured from available telemetry."
+    ]
+  }
+]

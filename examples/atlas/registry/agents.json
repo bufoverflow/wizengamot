@@ -1,0 +1,560 @@
+[
+  {
+    "name": "atlas-chief",
+    "title": "Atlas Chief",
+    "tier": "chief",
+    "domain": "cross-domain",
+    "role": "orchestrator",
+    "description": "Coordinates the complete Atlas example workspace.",
+    "model": "opus",
+    "max_turns": 40,
+    "recommended_budget_usd": 1.5,
+    "effort": "xhigh",
+    "tools": [
+      "Agent",
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch",
+      "Write",
+      "Edit",
+      "SendMessage",
+      "Skill"
+    ],
+    "disallowed_tools": [],
+    "library_path": "agent-library/root/atlas-chief.md",
+    "interactive_path": ".claude/agents/atlas-chief.md",
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-research-quality-director",
+    "title": "Research Quality Director",
+    "tier": "director",
+    "domain": "research-quality",
+    "role": "director",
+    "description": "Directs the Atlas Research Quality domain.",
+    "model": "sonnet",
+    "max_turns": 30,
+    "recommended_budget_usd": 0.85,
+    "effort": "high",
+    "tools": [
+      "Agent",
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch",
+      "Write",
+      "Edit",
+      "SendMessage",
+      "Skill"
+    ],
+    "disallowed_tools": [],
+    "library_path": "agent-library/directors/atlas-research-quality-director.md",
+    "interactive_path": ".claude/agents/directors/atlas-research-quality-director.md",
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-research-quality-first-principles-analyst",
+    "title": "First-Principles Analyst — Research Quality",
+    "tier": "specialist",
+    "domain": "research-quality",
+    "role": "first-principles-analyst",
+    "description": "First-Principles Analyst for the Atlas Research Quality domain.",
+    "model": "sonnet",
+    "max_turns": 16,
+    "recommended_budget_usd": 0.5,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/research-quality/atlas-research-quality-first-principles-analyst.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-research-quality-evidence-researcher",
+    "title": "Evidence Researcher — Research Quality",
+    "tier": "specialist",
+    "domain": "research-quality",
+    "role": "evidence-researcher",
+    "description": "Evidence Researcher for the Atlas Research Quality domain.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "recommended_budget_usd": 0.55,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/research-quality/atlas-research-quality-evidence-researcher.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-research-quality-implementation-planner",
+    "title": "Implementation Planner — Research Quality",
+    "tier": "specialist",
+    "domain": "research-quality",
+    "role": "implementation-planner",
+    "description": "Implementation Planner for the Atlas Research Quality domain.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "recommended_budget_usd": 0.55,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/research-quality/atlas-research-quality-implementation-planner.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-research-quality-threat-risk-analyst",
+    "title": "Threat and Risk Analyst — Research Quality",
+    "tier": "specialist",
+    "domain": "research-quality",
+    "role": "threat-risk-analyst",
+    "description": "Threat and Risk Analyst for the Atlas Research Quality domain.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "recommended_budget_usd": 0.6,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/research-quality/atlas-research-quality-threat-risk-analyst.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-research-quality-falsification-agent",
+    "title": "Falsification Agent — Research Quality",
+    "tier": "specialist",
+    "domain": "research-quality",
+    "role": "falsification-agent",
+    "description": "Falsification Agent for the Atlas Research Quality domain.",
+    "model": "opus",
+    "max_turns": 22,
+    "recommended_budget_usd": 0.75,
+    "effort": "xhigh",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/research-quality/atlas-research-quality-falsification-agent.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-research-quality-verifier-auditor",
+    "title": "Verifier and Auditor — Research Quality",
+    "tier": "specialist",
+    "domain": "research-quality",
+    "role": "verifier-auditor",
+    "description": "Verifier and Auditor for the Atlas Research Quality domain.",
+    "model": "sonnet",
+    "max_turns": 16,
+    "recommended_budget_usd": 0.5,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/research-quality/atlas-research-quality-verifier-auditor.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-delivery-reliability-director",
+    "title": "Delivery Reliability Director",
+    "tier": "director",
+    "domain": "delivery-reliability",
+    "role": "director",
+    "description": "Directs the Atlas Delivery Reliability domain.",
+    "model": "sonnet",
+    "max_turns": 30,
+    "recommended_budget_usd": 0.85,
+    "effort": "high",
+    "tools": [
+      "Agent",
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch",
+      "Write",
+      "Edit",
+      "SendMessage",
+      "Skill"
+    ],
+    "disallowed_tools": [],
+    "library_path": "agent-library/directors/atlas-delivery-reliability-director.md",
+    "interactive_path": ".claude/agents/directors/atlas-delivery-reliability-director.md",
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-delivery-reliability-first-principles-analyst",
+    "title": "First-Principles Analyst — Delivery Reliability",
+    "tier": "specialist",
+    "domain": "delivery-reliability",
+    "role": "first-principles-analyst",
+    "description": "First-Principles Analyst for the Atlas Delivery Reliability domain.",
+    "model": "sonnet",
+    "max_turns": 16,
+    "recommended_budget_usd": 0.5,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/delivery-reliability/atlas-delivery-reliability-first-principles-analyst.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-delivery-reliability-evidence-researcher",
+    "title": "Evidence Researcher — Delivery Reliability",
+    "tier": "specialist",
+    "domain": "delivery-reliability",
+    "role": "evidence-researcher",
+    "description": "Evidence Researcher for the Atlas Delivery Reliability domain.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "recommended_budget_usd": 0.55,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/delivery-reliability/atlas-delivery-reliability-evidence-researcher.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-delivery-reliability-implementation-planner",
+    "title": "Implementation Planner — Delivery Reliability",
+    "tier": "specialist",
+    "domain": "delivery-reliability",
+    "role": "implementation-planner",
+    "description": "Implementation Planner for the Atlas Delivery Reliability domain.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "recommended_budget_usd": 0.55,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/delivery-reliability/atlas-delivery-reliability-implementation-planner.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-delivery-reliability-threat-risk-analyst",
+    "title": "Threat and Risk Analyst — Delivery Reliability",
+    "tier": "specialist",
+    "domain": "delivery-reliability",
+    "role": "threat-risk-analyst",
+    "description": "Threat and Risk Analyst for the Atlas Delivery Reliability domain.",
+    "model": "sonnet",
+    "max_turns": 18,
+    "recommended_budget_usd": 0.6,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/delivery-reliability/atlas-delivery-reliability-threat-risk-analyst.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-delivery-reliability-falsification-agent",
+    "title": "Falsification Agent — Delivery Reliability",
+    "tier": "specialist",
+    "domain": "delivery-reliability",
+    "role": "falsification-agent",
+    "description": "Falsification Agent for the Atlas Delivery Reliability domain.",
+    "model": "opus",
+    "max_turns": 22,
+    "recommended_budget_usd": 0.75,
+    "effort": "xhigh",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/delivery-reliability/atlas-delivery-reliability-falsification-agent.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-delivery-reliability-verifier-auditor",
+    "title": "Verifier and Auditor — Delivery Reliability",
+    "tier": "specialist",
+    "domain": "delivery-reliability",
+    "role": "verifier-auditor",
+    "description": "Verifier and Auditor for the Atlas Delivery Reliability domain.",
+    "model": "sonnet",
+    "max_turns": 16,
+    "recommended_budget_usd": 0.5,
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/specialists/delivery-reliability/atlas-delivery-reliability-verifier-auditor.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-council-adversarial-review",
+    "title": "Adversarial Review Council",
+    "tier": "council",
+    "domain": "cross-domain",
+    "role": "adversarial-review",
+    "description": "Attacks the complete Atlas pilot-readiness case.",
+    "model": "opus",
+    "max_turns": 22,
+    "recommended_budget_usd": 0.8,
+    "effort": "xhigh",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/councils/atlas-council-adversarial-review.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  },
+  {
+    "name": "atlas-synthesis-decision-memo",
+    "title": "Atlas Decision Memo Synthesizer",
+    "tier": "synthesis",
+    "domain": "cross-domain",
+    "role": "decision-memo",
+    "description": "Synthesizes Atlas source reports into a decision memo.",
+    "model": "opus",
+    "max_turns": 28,
+    "recommended_budget_usd": 1.0,
+    "effort": "xhigh",
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "disallowed_tools": [
+      "Agent",
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit"
+    ],
+    "library_path": "agent-library/synthesis/atlas-synthesis-decision-memo.md",
+    "interactive_path": null,
+    "context": [
+      "context/INDEX.md",
+      "context/project-brief.md",
+      "context/claims.json"
+    ]
+  }
+]

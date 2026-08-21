@@ -1,0 +1,20 @@
+{
+  "name": "full-audit",
+  "description": "Run both directors, all twelve specialists, and the adversarial council.",
+  "selectors": {
+    "tiers": [
+      "director",
+      "specialist",
+      "council"
+    ],
+    "domains": [
+      "*"
+    ],
+    "roles": [
+      "*"
+    ]
+  },
+  "prompt": "Audit Atlas pilot readiness. Preserve independent reasoning, attack unsupported claims, and return decision-relevant findings.",
+  "default_concurrency": 5,
+  "default_agent_budget_usd": 0.5
+}
