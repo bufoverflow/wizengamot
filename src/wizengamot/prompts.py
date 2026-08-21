@@ -7,6 +7,25 @@ from .models import AgentRecord
 from .workspace import load_workspace_config
 
 
+EPISTEMIC_RULES = """## Epistemic governance
+
+This report is model-generated reasoning. It is not empirical evidence and must never be treated as an independent validation event. Source evidence carried into the report retains its original provenance.
+
+For every material finding:
+- classify the evidence source as customer evidence, project record, external primary, external secondary, model reasoning, or unknown;
+- classify novelty as retrieved, derived, corroborated, contradicted, novel, or unresolved;
+- cite source identifiers when available;
+- do not count rediscovery of an existing project observation as independent corroboration;
+- do not convert model agreement, model confidence, or failure to falsify into customer validation, willingness-to-pay, observed demand, observed workflow, traction, or other empirical scores.
+
+When relevant internal evidence exists, reconcile the conclusion against it. Falsification and council work should cite relevant interview/customer records rather than attacking only a clean-room restatement of the thesis. Missing relevant source evidence is an evidence gap.
+
+Every complete or partial report should terminate in at least one concrete next action with an owner and target date. Prefer external evidence-generating actions when uncertainty can be resolved in the world. Match the evidence bar to reversibility: calls, emails, interviews, and small pilots usually deserve a near-zero or low bar; expensive or difficult-to-reverse commitments may justify a higher bar.
+
+Review whether the evidence threshold for action is drifting upward. A higher bar is justified by new external evidence, a customer-raised question, or a real operational constraint. A hypothetical objection generated only by the model does not, by itself, justify delaying a cheap reversible action.
+"""
+
+
 def read_agent_body(root: Path, agent: AgentRecord) -> str:
     text = (root / agent.library_path).read_text(encoding="utf-8")
     if not text.startswith("---\n"):
@@ -35,9 +54,11 @@ def build_system_prompt(root: Path, agent: AgentRecord) -> str:
     synthesis_instruction = ""
     if agent.tier == "synthesis":
         synthesis_instruction = (
-            "\n\nSynthesis output rule: put the complete decision-ready artifact in the optional "
-            "`artifact_markdown` field. Record source report paths in `source_report_paths` "
-            "and material reconciliation choices in `decision_log`."
+            "\n\nSynthesis output rule: put a decision-ready artifact in the optional `artifact_markdown` "
+            "field only when the task explicitly calls for an artifact. Preserve human authorship for high-stakes "
+            "founder narrative by default: audit claims, evidence, ambiguity, confidentiality, and objections rather "
+            "than silently replacing the author's voice. Record source report paths in `source_report_paths` and "
+            "material reconciliation choices in `decision_log`."
         )
     return (
         f"{body}\n\n"
@@ -45,6 +66,7 @@ def build_system_prompt(root: Path, agent: AgentRecord) -> str:
         "This invocation is one independent batch session. You cannot spawn agents, run shell "
         "commands, mutate files, or change task state. Perform the assigned analysis yourself. "
         "Record cross-domain work as handoff questions rather than attempting delegation.\n\n"
+        f"{EPISTEMIC_RULES}\n"
         "Read the following workspace records before material analysis. Use the smallest relevant "
         "context set, preserve source provenance, and treat missing records as evidence gaps.\n\n"
         f"{listed_context or '- No local context files are configured.'}"
