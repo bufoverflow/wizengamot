@@ -258,6 +258,14 @@ printf 'Virtual environment: Python %s at %s\n' "$(python_version "$VENV_PYTHON"
 PYTHONPATH="$ROOT_DIR/src" "$VENV_PYTHON" -m unittest discover -s "$ROOT_DIR/tests" -v
 "$VENV_WIZENGAMOT" sdk-check
 
+# Install the repository-local privacy hook when bootstrap runs from a Git
+# work tree. Release archives intentionally contain no Git metadata.
+if git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  "$ROOT_DIR/scripts/install_git_hooks.sh"
+else
+  printf 'Skipping Git hooks: not a Git checkout.\n'
+fi
+
 cat <<EOF_DONE
 
 Installed with Python $(python_version "$VENV_PYTHON"). Try:
