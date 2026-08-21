@@ -6,6 +6,7 @@
   "required": [
     "agent_name",
     "status",
+    "epistemic_notice",
     "executive_summary",
     "findings",
     "risks",
@@ -13,23 +14,24 @@
     "recommendations",
     "evidence_gaps",
     "citations",
+    "actions",
+    "evidence_bar_review",
     "handoff"
   ],
   "properties": {
-    "agent_name": {
-      "type": "string"
+    "agent_name": {"type": "string"},
+    "status": {"type": "string", "enum": ["complete", "partial", "blocked"]},
+    "epistemic_notice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_generated", "report_is_evidence", "moves_empirical_validation"],
+      "properties": {
+        "model_generated": {"const": true},
+        "report_is_evidence": {"const": false},
+        "moves_empirical_validation": {"const": false}
+      }
     },
-    "status": {
-      "type": "string",
-      "enum": [
-        "complete",
-        "partial",
-        "blocked"
-      ]
-    },
-    "executive_summary": {
-      "type": "string"
-    },
+    "executive_summary": {"type": "string"},
     "findings": {
       "type": "array",
       "items": {
@@ -38,127 +40,84 @@
         "required": [
           "statement",
           "classification",
+          "evidence_class",
+          "novelty",
+          "source_ids",
           "confidence",
           "impact",
           "evidence"
         ],
         "properties": {
-          "statement": {
-            "type": "string"
-          },
+          "statement": {"type": "string"},
           "classification": {
             "type": "string",
-            "enum": [
-              "fact",
-              "project-record",
-              "hypothesis",
-              "inference",
-              "recommendation",
-              "legal-question",
-              "unknown"
-            ]
+            "enum": ["fact", "project-record", "hypothesis", "inference", "recommendation", "legal-question", "unknown"]
           },
-          "confidence": {
+          "evidence_class": {
             "type": "string",
-            "enum": [
-              "high",
-              "moderate",
-              "low",
-              "unknown"
-            ]
+            "enum": ["customer-evidence", "project-record", "external-primary", "external-secondary", "model-reasoning", "unknown"]
           },
-          "impact": {
-            "type": "string"
+          "novelty": {
+            "type": "string",
+            "enum": ["retrieved", "derived", "corroborated", "contradicted", "novel", "unresolved"]
           },
-          "evidence": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
+          "source_ids": {"type": "array", "items": {"type": "string"}},
+          "confidence": {"type": "string", "enum": ["high", "moderate", "low", "unknown"]},
+          "impact": {"type": "string"},
+          "evidence": {"type": "array", "items": {"type": "string"}}
         }
       }
     },
-    "risks": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "falsifiers": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "recommendations": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "evidence_gaps": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "falsifiers": {"type": "array", "items": {"type": "string"}},
+    "recommendations": {"type": "array", "items": {"type": "string"}},
+    "evidence_gaps": {"type": "array", "items": {"type": "string"}},
     "citations": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "label",
-          "source",
-          "date",
-          "primary"
-        ],
+        "required": ["label", "source", "date", "primary"],
         "properties": {
-          "label": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string"
-          },
-          "date": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "primary": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          }
+          "label": {"type": "string"},
+          "source": {"type": "string"},
+          "date": {"type": ["string", "null"]},
+          "primary": {"type": ["boolean", "null"]}
         }
       }
     },
-    "handoff": {
+    "actions": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description", "owner", "target_date", "action_type", "reversibility", "evidence_bar", "rationale"],
+        "properties": {
+          "description": {"type": "string"},
+          "owner": {"type": "string"},
+          "target_date": {"type": ["string", "null"]},
+          "action_type": {"type": "string", "enum": ["external", "internal"]},
+          "reversibility": {"type": "string", "enum": ["reversible", "partially-reversible", "irreversible"]},
+          "evidence_bar": {"type": "string", "enum": ["near-zero", "low", "moderate", "high"]},
+          "rationale": {"type": "string"}
+        }
       }
     },
-    "artifact_markdown": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "decision_log": {
-      "type": "array",
-      "items": {
-        "type": "string"
+    "evidence_bar_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_threshold", "prior_threshold", "drift_direction", "drift_basis", "recommendation"],
+      "properties": {
+        "current_threshold": {"type": "string", "enum": ["near-zero", "low", "moderate", "high", "unknown"]},
+        "prior_threshold": {"type": ["string", "null"], "enum": ["near-zero", "low", "moderate", "high", "unknown", null]},
+        "drift_direction": {"type": "string", "enum": ["rising", "stable", "falling", "unknown"]},
+        "drift_basis": {"type": "string", "enum": ["external-evidence", "customer-raised", "operational-constraint", "model-generated", "unknown"]},
+        "recommendation": {"type": "string"}
       }
     },
-    "source_report_paths": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    }
+    "handoff": {"type": "array", "items": {"type": "string"}},
+    "artifact_markdown": {"type": ["string", "null"]},
+    "decision_log": {"type": "array", "items": {"type": "string"}},
+    "source_report_paths": {"type": "array", "items": {"type": "string"}}
   }
 }
