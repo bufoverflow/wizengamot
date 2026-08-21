@@ -114,31 +114,61 @@ def path_errors(path: Path) -> list[str]:
     return errors
 
 
-def scan(paths: list[Path]) -> list[str]:
+def read_staged_bytes(path: Path) -> bytes:
+    """Read the exact blob currently staged in Git's index."""
+    rel = path.relative_to(ROOT).as_posix()
+    result = subprocess.run(
+        ["git", "show", f":{rel}"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr.decode("utf-8", errors="replace").strip()
+            or f"could not read staged content for {rel}"
+        )
+    return result.stdout
+
+
+def scan(paths: list[Path], *, staged: bool = False) -> list[str]:
     errors: list[str] = []
     terms = load_forbidden_terms()
+
     for path in paths:
-        if not path.exists() or not path.is_file():
-            continue
         rel = path.relative_to(ROOT).as_posix()
+
         for issue in path_errors(path):
             errors.append(f"{rel}: {issue}")
-        if path.stat().st_size > 5_000_000:
+
+        if staged:
+            data = read_staged_bytes(path)
+        else:
+            if not path.exists() or not path.is_file():
+                continue
+            data = path.read_bytes()
+
+        if len(data) > 5_000_000:
             errors.append(f"{rel}: file exceeds 5 MB public review limit")
             continue
-        data = path.read_bytes()
+
         if b"\x00" in data:
             continue
-        text = data.decode("utf-8", errors="replace")
+
+        file_text = data.decode("utf-8", errors="replace")
+
         for label, pattern in SECRET_PATTERNS.items():
-            if pattern.search(text):
+            if pattern.search(file_text):
                 errors.append(f"{rel}: possible {label}")
-        lower = text.casefold()
+
+        lower = file_text.casefold()
         for term in terms:
             if term.casefold() in lower:
-                errors.append(f"{rel}: contains locally forbidden term {term!r}")
-    return sorted(set(errors))
+                errors.append(
+                    f"{rel}: contains locally forbidden term {term!r}"
+                )
 
+    return sorted(set(errors))
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reject private paths and likely secrets from the public boundary")
@@ -158,7 +188,7 @@ def main() -> int:
             paths = load_public_files()
         else:
             paths = [(ROOT / value).resolve() for value in args.paths]
-        errors = scan(paths)
+        errors = scan(paths, staged=args.staged)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"Privacy check failed to run: {exc}", file=sys.stderr)
         return 2
