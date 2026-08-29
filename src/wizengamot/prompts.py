@@ -24,8 +24,10 @@ External-source discipline:
 - one citation object represents exactly one identifiable source; never bundle multiple publications, sites, or documents into a single citation;
 - prefer authoritative primary sources whenever reasonably available for statutes, regulations, filings, standards, protocols, official product capabilities, and first-party claims;
 - secondary sources may supplement a primary source but should not be the principal support when a primary source is reasonably available;
-- every external citation needs a stable source identifier, source class, publisher when known, source title/description, locator or URL when available, date when known, and the specific claims it supports;
+- every external citation needs a descriptive stable source identifier, source class, one publisher, one exact source title/description, a direct URL, DOI, or precise formal document locator, date when known, and the specific claims it supports. Search-result summaries, aggregated coverage, and placeholders such as `article body` are not sources or locators;
 - a negative-capability statement such as `system X does not support Y` is an inference unless directly established by an authoritative source. Record every primary document or specification actually reviewed in `reviewed_source_ids`, describe the reviewed scope in the finding evidence, and do not turn failure to find a feature into a factual assertion of absence;
+- if a comparison names several products or categories, document the reviewed scope for every material category or narrow the conclusion to the categories actually reviewed;
+- if material clauses in one finding rely on different evidence classes, split them into separate findings or classify the whole finding at the weakest material support. Do not classify model inference about a project record as `project-record`;
 - absence from a marketing page is not evidence of absence. If documentation scope is incomplete, lower confidence and state the evidence gap.
 
 When relevant internal evidence exists, reconcile the conclusion against it. Falsification and council work should cite relevant interview/customer records rather than attacking only a clean-room restatement of the thesis. Missing relevant source evidence is an evidence gap.

@@ -13,7 +13,7 @@ from .activation import activate, clear_activated
 from .governance import analysis_guard_blocked, note_analysis_run, record_external_action
 from .models import LaunchPlan
 from .registry import load_agents, load_campaign, select_agents, select_campaign
-from .runner import DENIED_TOOLS, READ_ONLY_TOOLS, launch_plan, make_run_id
+from .runner import DENIED_TOOLS, READ_ONLY_TOOLS, check_run_contract, launch_plan, make_run_id
 from .validation import validate
 from .workspace import load_workspace_config, resolve_workspace
 
@@ -92,6 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("workspace", help="Show the resolved workspace and configuration")
     sub.add_parser("validate", help="Validate the workspace, agents, context, schema, and campaigns")
     sub.add_parser("count", help="Count agents by tier")
+
+    p_check_run = sub.add_parser(
+        "check-run-contract",
+        help="Recompute the mechanical report contract for saved run results",
+    )
+    p_check_run.add_argument("--run-id", required=True)
+    p_check_run.add_argument("--name", action="append", default=[])
 
     p_record = sub.add_parser(
         "record-action",
@@ -206,6 +213,22 @@ def main(argv: list[str] | None = None) -> int:
         for tier, count in sorted(Counter(a.tier for a in agents).items()):
             print(f"{tier}: {count}")
         return 0
+
+    if args.command == "check-run-contract":
+        if not RUN_ID_RE.fullmatch(args.run_id):
+            print(
+                "Run ID must start with an alphanumeric character and contain only letters, numbers, "
+                "dots, underscores, and hyphens.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            result = check_run_contract(root / "runs" / args.run_id, names=args.name)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2))
+        return 0 if result["mechanically_qualified"] else 1
 
     if args.command == "sdk-check":
         try:

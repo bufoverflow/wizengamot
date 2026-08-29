@@ -85,6 +85,9 @@ class PromptTests(unittest.TestCase):
         self.assertIn("absence from a marketing page is not evidence of absence", prompt)
         self.assertIn("use `corroborated` only when an independent source supports the same proposition", prompt)
         self.assertIn("use `derived`", prompt)
+        self.assertIn("document the reviewed scope for every material category", prompt)
+        self.assertIn("Search-result summaries", prompt)
+        self.assertIn("split them into separate findings", prompt)
 
 
 if __name__ == "__main__":

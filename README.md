@@ -275,11 +275,22 @@ Behavior:
 
 - Each result write is atomic.
 - Existing successful reports are skipped by default.
-- Failed or malformed reports remain eligible for a later attempt.
+- Failed, malformed, or report-contract-invalid reports remain saved and eligible for a later attempt.
+- Provenance violations are stored in `report_contract_errors`, prevent success, and are supplied to the next configured retry as repair feedback.
 - Reusing a run ID with a different task, campaign, or roster is rejected.
 - Run IDs reject path traversal.
 - Retries default to zero.
 - Known SDK costs are aggregated from attempt records.
+
+Recompute the current mechanical report contract before promoting a calibration or qualifier:
+
+```bash
+wizengamot --workspace workspace check-run-contract \
+  --run-id <run-id> \
+  --name <agent-name>
+```
+
+The command is read-only and exits nonzero when a selected result is missing, unsuccessful, malformed, or provenance-invalid. A mechanical pass does not replace semantic or human review.
 
 ## Source analysis and synthesis
 
