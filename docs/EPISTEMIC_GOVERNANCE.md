@@ -44,6 +44,12 @@ Each material finding also classifies its claim as `positive`, `negative-capabil
 
 Negative-capability claims require explicit scope accounting. Saying that a system does not support a capability is an inference unless an authoritative source directly establishes that absence. The finding must list the primary documents or specifications actually reviewed in `reviewed_source_ids`, describe the reviewed scope in its evidence, lower confidence when documentation is incomplete, and record the remaining evidence gap. Absence from a marketing page is not evidence of absence.
 
+The runtime report-contract validator enforces provenance invariants that JSON Schema cannot express reliably. Invalid reports remain saved with `report_contract_errors` for diagnosis, but do not count as successful results. Contract errors trigger configured retries, and the next attempt receives the violations as repair feedback. Progress and summary status report these outcomes as `contract-error`.
+
+The runtime gate mechanically requires descriptive external source IDs, complete external citation metadata, primary/source-class agreement, atomic and identifying source locators, non-empty supported claims, reviewed-source accounting for negative and comparative findings, two sources for corroboration, resolvable external references, and primary citation support for `external-primary` findings. Search-result summaries, bundled coverage, and placeholder locators are rejected. Semantic scope remains a reasoning obligation: a comparison spanning several products or categories must document every material category reviewed or narrow its conclusion.
+
+Use `wizengamot --workspace <workspace> check-run-contract --run-id <run-id>` to recompute the current mechanical contract against saved results before treating a calibration as qualified. The command is read-only and exits nonzero when any selected result is missing, malformed, unsuccessful, or contract-invalid. It does not replace semantic or human review.
+
 ## Novelty accounting
 
 Each material finding should classify its relationship to the supplied corpus:

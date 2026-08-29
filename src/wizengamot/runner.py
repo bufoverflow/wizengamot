@@ -10,14 +10,17 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
+from .live import LiveTail, describe_sdk_message
 from .models import AgentRecord, LaunchPlan
 from .prompts import build_system_prompt, build_task_prompt, load_output_schema
+from .report_contract import annotate_report_contract, payload_contract_errors
 
 READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "WebSearch", "WebFetch"]
 DENIED_TOOLS = ["Agent", "Bash", "Edit", "Write", "NotebookEdit", "TaskCreate", "TaskUpdate", "TaskStop"]
 ATTEMPT_RE = re.compile(r"^attempt-(\d+)\.json$")
+RESULT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def utc_now() -> str:
@@ -93,7 +96,63 @@ def payload_succeeded(payload: dict[str, Any] | None, *, expected_agent: str | N
         return False
     if expected_agent is not None and report.get("agent_name") != expected_agent:
         return False
+    if payload_contract_errors(payload):
+        return False
     return True
+
+
+def payload_report_status(payload: dict[str, Any] | None) -> str:
+    if not isinstance(payload, dict):
+        return "runner-error"
+    result = payload.get("result")
+    report = result.get("report") if isinstance(result, dict) else None
+    if not isinstance(report, dict):
+        return "runner-error"
+    status = report.get("status")
+    if not isinstance(status, str):
+        return "malformed-report"
+    if payload_contract_errors(payload):
+        return "contract-error"
+    return status
+
+
+def check_run_contract(run_dir: Path, *, names: list[str] | None = None) -> dict[str, Any]:
+    results_dir = run_dir / "results"
+    selected = names or []
+    invalid_names = [name for name in selected if not RESULT_NAME_RE.fullmatch(name)]
+    if invalid_names:
+        raise ValueError(f"Invalid result agent name: {invalid_names[0]}")
+    paths = (
+        [results_dir / f"{name}.json" for name in selected]
+        if selected
+        else sorted(results_dir.glob("*.json"))
+    )
+    if not paths:
+        raise ValueError(f"Run {run_dir.name} has no result payloads")
+
+    reports: list[dict[str, Any]] = []
+    for path in paths:
+        payload = read_json(path)
+        expected_agent = path.stem
+        exists = path.is_file()
+        errors = payload_contract_errors(payload) if isinstance(payload, dict) else []
+        mechanically_qualified = payload_succeeded(payload, expected_agent=expected_agent)
+        reports.append({
+            "agent_name": expected_agent,
+            "result_path": str(path),
+            "exists": exists,
+            "status": payload_report_status(payload),
+            "report_contract_errors": errors,
+            "mechanically_qualified": mechanically_qualified,
+        })
+
+    return {
+        "run_id": run_dir.name,
+        "report_count": len(reports),
+        "mechanically_qualified": all(report["mechanically_qualified"] for report in reports),
+        "semantic_review_required": True,
+        "reports": reports,
+    }
 
 
 def next_attempt_number(agent_attempts_dir: Path) -> int:
@@ -172,6 +231,8 @@ async def execute_agent(
     max_budget_usd: float,
     max_turns: int | None,
     attempt: int,
+    activity_callback: Callable[[str], None] | None = None,
+    prior_report_contract_errors: list[str] | None = None,
 ) -> dict[str, Any]:
     started = utc_now()
     start_clock = time.monotonic()
@@ -209,8 +270,19 @@ async def execute_agent(
 
     final: Any = None
     prompt = build_task_prompt(agent, task, campaign_prompt)
+    if prior_report_contract_errors:
+        violations = "\n".join(f"- {error}" for error in prior_report_contract_errors)
+        prompt = (
+            f"{prompt}\n\n"
+            "The previous attempt was rejected by the runtime report-contract validator. "
+            "Repair every provenance violation below in this new report:\n"
+            f"{violations}"
+        )
     try:
         async for message in query(prompt=prompt, options=options):
+            activity = describe_sdk_message(message)
+            if activity_callback is not None and activity:
+                activity_callback(activity)
             if isinstance(message, ResultMessage):
                 final = message
         if final is None:
@@ -238,6 +310,7 @@ async def execute_agent(
                 "report": None,
             },
         }
+    annotate_report_contract(payload)
     atomic_json(output_path, payload)
     return payload
 
@@ -278,13 +351,12 @@ async def launch_plan(
         "last_agent": None,
     }
     atomic_json(progress_path, progress)
+    live = LiveTail(total=len(plan.agents), enabled=emit_progress)
+    progress_lines: list[str] = []
+    await live.start()
 
     async def record_progress(agent: AgentRecord, payload: dict[str, Any], was_skipped: bool) -> None:
-        result = payload.get("result") if isinstance(payload, dict) else None
-        report = result.get("report") if isinstance(result, dict) else None
-        report_status = report.get("status") if isinstance(report, dict) else "runner-error"
-        if not isinstance(report_status, str):
-            report_status = "malformed-report"
+        report_status = payload_report_status(payload)
         valid = payload_succeeded(payload, expected_agent=agent.name)
         async with progress_lock:
             progress["completed"] += 1
@@ -296,13 +368,17 @@ async def launch_plan(
             progress["last_agent"] = agent.name
             progress["updated_at"] = utc_now()
             atomic_json(progress_path, progress)
+            live.complete_agent(agent.name)
             if emit_progress:
                 suffix = " skipped" if was_skipped else ""
-                print(
+                line = (
                     f"[{progress['completed']:03d}/{progress['total']:03d}] "
-                    f"{report_status:<12} {agent.name}{suffix}",
-                    flush=True,
+                    f"{report_status:<12} {agent.name}{suffix}"
                 )
+                if live.enabled:
+                    progress_lines.append(line)
+                else:
+                    print(line, flush=True)
 
     semaphore = asyncio.Semaphore(plan.concurrency)
 
@@ -316,9 +392,16 @@ async def launch_plan(
         agent_attempts_dir = attempts_root / agent.name
         first_attempt = next_attempt_number(agent_attempts_dir)
         last: dict[str, Any] | None = None
+        prior_report_contract_errors: list[str] | None = None
+
+        def on_activity(activity: str) -> None:
+            live.update_agent(agent.name, activity)
+
         async with semaphore:
+            live.start_agent(agent.name, f"{agent.model} · attempt {first_attempt}")
             for attempt in range(first_attempt, first_attempt + plan.retries + 1):
                 attempt_path = agent_attempts_dir / f"attempt-{attempt}.json"
+                live.update_agent(agent.name, f"{agent.model} · attempt {attempt} starting")
                 last = await execute_agent(
                     root=root,
                     agent=agent,
@@ -328,15 +411,27 @@ async def launch_plan(
                     max_budget_usd=plan.per_agent_budget_usd,
                     max_turns=None,
                     attempt=attempt,
+                    activity_callback=on_activity,
+                    prior_report_contract_errors=prior_report_contract_errors,
                 )
+                contract_errors = annotate_report_contract(last)
+                atomic_json(attempt_path, last)
                 atomic_json(final_path, last)
                 if payload_succeeded(last, expected_agent=agent.name):
                     break
+                prior_report_contract_errors = contract_errors or None
         assert last is not None
         await record_progress(agent, last, False)
         return last, False
 
-    outcomes = await asyncio.gather(*(worker(agent) for agent in plan.agents))
+    try:
+        outcomes = await asyncio.gather(*(worker(agent) for agent in plan.agents))
+    finally:
+        await live.stop()
+        if emit_progress and live.enabled:
+            for line in progress_lines:
+                print(line, flush=True)
+
     outputs = [payload for payload, _ in outcomes]
     skipped = sum(was_skipped for _, was_skipped in outcomes)
 
@@ -353,11 +448,7 @@ async def launch_plan(
     )
     report_status_counts: dict[str, int] = {}
     for payload in outputs:
-        result = payload.get("result") if isinstance(payload, dict) else None
-        report = result.get("report") if isinstance(result, dict) else None
-        status = report.get("status") if isinstance(report, dict) else "runner-error"
-        if not isinstance(status, str):
-            status = "malformed-report"
+        status = payload_report_status(payload)
         report_status_counts[status] = report_status_counts.get(status, 0) + 1
     summary = {
         "run_id": plan.run_dir.name,

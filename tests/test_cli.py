@@ -53,6 +53,18 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("Run ID must start", stderr.getvalue())
 
+    def test_check_run_contract_rejects_agent_name_path_traversal(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = main([
+                "--workspace", str(WORKSPACE),
+                "check-run-contract",
+                "--run-id", "synthetic-run",
+                "--name", "../outside",
+            ])
+        self.assertEqual(code, 2)
+        self.assertIn("Invalid result agent name", stderr.getvalue())
+
     def test_launch_defaults_to_dry_run(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
