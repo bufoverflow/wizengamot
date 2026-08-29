@@ -437,8 +437,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Launch failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
+    if summary.get("status") == "paused":
+        pause = summary.get("pause")
+        pause = pause if isinstance(pause, dict) else {}
+        error = pause.get("error", "Claude returned a global provider failure.")
+        reset_hint = pause.get("reset_hint", "Resolve the provider failure before resuming.")
+        print(f"Run paused: {error}", file=sys.stderr)
+        print(str(reset_hint), file=sys.stderr)
+        print(f"Resume with the same --run-id {summary['run_id']}.", file=sys.stderr)
+
     if (
         summary["failed"] == 0
+        and summary.get("status") != "paused"
         and config.analysis_loop_guard_enabled
         and not args.analysis_exempt
     ):
@@ -450,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(json.dumps(summary, indent=2))
-    return 0 if summary["failed"] == 0 else 1
+    return 0 if summary["failed"] == 0 and summary.get("status") != "paused" else 1
 
 
 if __name__ == "__main__":

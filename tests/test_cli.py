@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "examples/atlas"
@@ -78,6 +79,41 @@ class CliTests(unittest.TestCase):
             ])
         self.assertEqual(code, 0)
         self.assertIn("Dry run only", stdout.getvalue())
+
+    def test_global_provider_pause_exits_nonzero_with_resume_message(self):
+        summary = {
+            "run_id": "paused-cli-run",
+            "status": "paused",
+            "failed": 1,
+            "pause": {
+                "error": "Your organization quota has been exhausted.",
+                "reset_hint": "Restore the Claude account quota before resuming.",
+            },
+        }
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch("wizengamot.cli.launch_plan", new=AsyncMock(return_value=summary)),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = main([
+                "--workspace", str(WORKSPACE),
+                "launch",
+                "--name", "atlas-research-quality-verifier-auditor",
+                "--task", "Synthetic paused CLI test",
+                "--concurrency", "1",
+                "--max-agent-budget", "0.50",
+                "--max-total-budget", "0.50",
+                "--run-id", "paused-cli-run",
+                "--analysis-exempt", "incident-recovery",
+                "--execute",
+            ])
+
+        self.assertEqual(code, 1)
+        self.assertIn("Run paused:", stderr.getvalue())
+        self.assertIn("same --run-id paused-cli-run", stderr.getvalue())
+        self.assertIn('"status": "paused"', stdout.getvalue())
 
     def _large_workspace(self, root: Path) -> Path:
         workspace = root / "large"

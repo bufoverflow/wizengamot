@@ -7,7 +7,7 @@ import re
 import tempfile
 import time
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -21,6 +21,50 @@ READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "WebSearch", "WebFetch"]
 DENIED_TOOLS = ["Agent", "Bash", "Edit", "Write", "NotebookEdit", "TaskCreate", "TaskUpdate", "TaskStop"]
 ATTEMPT_RE = re.compile(r"^attempt-(\d+)\.json$")
 RESULT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+SESSION_LIMIT_PATTERNS = (
+    re.compile(r"\bsession(?:[\s_-]+)limit\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:claude(?: code)?|usage|message)[\s_-]+limit\b.*"
+        r"\b(?:hit|reached|exceeded|exhausted|reset|resets)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:hit|reached)\s+(?:your\s+)?(?:claude(?: code)?\s+)?(?:usage\s+)?limit\b",
+        re.IGNORECASE,
+    ),
+)
+ACCOUNT_QUOTA_PATTERNS = (
+    re.compile(r"\binsufficient[_ -]quota\b", re.IGNORECASE),
+    re.compile(r"\bquota(?:[_ -]+exceeded|[_ -]+exhausted)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:account|organization|org|monthly|spending|billing|usage)\b.*"
+        r"\b(?:quota|credits?|limit)\b.*\b(?:exceeded|reached|exhausted|depleted)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bcredit balance is too low\b", re.IGNORECASE),
+)
+AUTHENTICATION_PATTERNS = (
+    re.compile(r"\bauthentication[_ -]+error\b", re.IGNORECASE),
+    re.compile(r"\b(?:failed|unable) to authenticate\b", re.IGNORECASE),
+    re.compile(r"\binvalid (?:x-)?api[_ -]?key\b", re.IGNORECASE),
+    re.compile(r"\b401\b.*\b(?:unauthorized|authentication|credentials?)\b", re.IGNORECASE),
+    re.compile(r"\bnot logged in\b", re.IGNORECASE),
+    re.compile(r"\bplease (?:run\s+)?/?login\b", re.IGNORECASE),
+    re.compile(r"\b(?:oauth\s+)?token\b.*\b(?:expired|invalid|revoked)\b", re.IGNORECASE),
+    re.compile(r"\bcredentials?\b.*\b(?:missing|expired|invalid|revoked)\b", re.IGNORECASE),
+)
+RESET_HINT_RE = re.compile(
+    r"\b(?:limit\s+)?resets?\b[^.\n]*|\btry again (?:at|after|in|on)\b[^.\n]*",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class WorkerOutcome:
+    agent: AgentRecord
+    payload: dict[str, Any] | None
+    state: str
+    was_skipped: bool = False
 
 
 def utc_now() -> str:
@@ -56,10 +100,94 @@ def serialize_agent(agent: AgentRecord) -> dict[str, Any]:
     return value
 
 
+def _error_strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for item in value.values():
+            strings.extend(_error_strings(item))
+        return strings
+    if isinstance(value, (list, tuple, set)):
+        strings = []
+        for item in value:
+            strings.extend(_error_strings(item))
+        return strings
+    return []
+
+
+def classify_global_provider_failure(payload: dict[str, Any] | None) -> dict[str, str] | None:
+    """Return a campaign-wide Claude failure when retrying locally cannot help.
+
+    Ordinary transport errors and provider rate limits deliberately do not trip
+    this circuit breaker. Those may be isolated to one session and retain the
+    configured retry behavior.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    result = payload.get("result")
+    if not isinstance(result, dict) or not bool(result.get("is_error")):
+        return None
+
+    values: list[str] = []
+    for key in (
+        "errors",
+        "error",
+        "error_message",
+        "message",
+        "detail",
+        "subtype",
+        "terminal_reason",
+        "stop_reason",
+    ):
+        values.extend(_error_strings(result.get(key)))
+    if not values:
+        return None
+
+    categories = (
+        ("account-quota", ACCOUNT_QUOTA_PATTERNS),
+        ("session-limit", SESSION_LIMIT_PATTERNS),
+        ("authentication", AUTHENTICATION_PATTERNS),
+    )
+    matched_code: str | None = None
+    matched_error: str | None = None
+    for code, patterns in categories:
+        for value in values:
+            if any(pattern.search(value) for pattern in patterns):
+                matched_code = code
+                matched_error = value
+                break
+        if matched_code is not None:
+            break
+    if matched_code is None or matched_error is None:
+        return None
+
+    combined = " ".join(values)
+    reset_match = RESET_HINT_RE.search(combined)
+    if reset_match is not None:
+        reset_hint = reset_match.group(0).strip()
+    elif matched_code == "session-limit":
+        reset_hint = "Resume after the Claude session limit resets."
+    elif matched_code == "account-quota":
+        reset_hint = "Restore or increase the Claude account quota before resuming."
+    else:
+        reset_hint = "Restore Claude authentication before resuming."
+
+    return {
+        "provider": "claude",
+        "code": matched_code,
+        "error": matched_error,
+        "reset_hint": reset_hint,
+    }
+
+
 def _result_payload(message: Any) -> dict[str, Any]:
     report = getattr(message, "structured_output", None)
+    raw = getattr(message, "result", None)
+    is_error = bool(getattr(message, "is_error", False))
     if report is None:
-        raw = getattr(message, "result", None)
         if isinstance(raw, str):
             try:
                 report = json.loads(raw)
@@ -67,7 +195,8 @@ def _result_payload(message: Any) -> dict[str, Any]:
                 report = {"raw_result": raw}
     return {
         "subtype": getattr(message, "subtype", None),
-        "is_error": bool(getattr(message, "is_error", False)),
+        "is_error": is_error,
+        "error_message": raw if is_error and isinstance(raw, str) else None,
         "session_id": getattr(message, "session_id", None),
         "num_turns": getattr(message, "num_turns", None),
         "duration_ms": getattr(message, "duration_ms", None),
@@ -337,16 +466,23 @@ async def launch_plan(
     )
 
     progress_path = plan.run_dir / "progress.json"
+    pause_path = plan.run_dir / "pause.json"
+    previous_pause = read_json(pause_path)
     progress_lock = asyncio.Lock()
     progress: dict[str, Any] = {
         "run_id": plan.run_dir.name,
+        "status": "running",
         "started_at": utc_now(),
         "updated_at": utc_now(),
         "total": len(plan.agents),
         "completed": 0,
         "valid_reports": 0,
         "failed": 0,
+        "deferred": 0,
         "skipped_successful": 0,
+        "completed_agents": [],
+        "failed_agents": [],
+        "deferred_agents": [],
         "report_status_counts": {},
         "last_agent": None,
     }
@@ -381,25 +517,59 @@ async def launch_plan(
                     print(line, flush=True)
 
     semaphore = asyncio.Semaphore(plan.concurrency)
+    pause_event = asyncio.Event()
+    pause_failure: dict[str, Any] | None = None
 
-    async def worker(agent: AgentRecord) -> tuple[dict[str, Any], bool]:
+    async def trip_global_failure(
+        agent: AgentRecord,
+        payload: dict[str, Any],
+        failure: dict[str, str],
+    ) -> None:
+        nonlocal pause_failure
+        async with progress_lock:
+            if pause_failure is not None:
+                return
+            pause_failure = {
+                **failure,
+                "agent_name": agent.name,
+                "attempt": payload.get("attempt"),
+                "paused_at": utc_now(),
+            }
+            pause_event.set()
+            progress["status"] = "pausing"
+            progress["pause"] = dict(pause_failure)
+            progress["updated_at"] = pause_failure["paused_at"]
+            atomic_json(progress_path, progress)
+            atomic_json(pause_path, {
+                "run_id": plan.run_dir.name,
+                "status": "paused",
+                **pause_failure,
+                "resume_run_id": plan.run_dir.name,
+            })
+
+    async def worker(agent: AgentRecord) -> WorkerOutcome:
         final_path = results_dir / f"{agent.name}.json"
         existing = read_json(final_path)
         if skip_existing and payload_succeeded(existing, expected_agent=agent.name):
             await record_progress(agent, existing, True)
-            return existing, True
+            return WorkerOutcome(agent=agent, payload=existing, state="completed", was_skipped=True)
 
         agent_attempts_dir = attempts_root / agent.name
         first_attempt = next_attempt_number(agent_attempts_dir)
         last: dict[str, Any] | None = None
-        prior_report_contract_errors: list[str] | None = None
+        saved_contract_errors = payload_contract_errors(existing) if isinstance(existing, dict) else []
+        prior_report_contract_errors: list[str] | None = saved_contract_errors or None
 
         def on_activity(activity: str) -> None:
             live.update_agent(agent.name, activity)
 
         async with semaphore:
+            if pause_event.is_set():
+                return WorkerOutcome(agent=agent, payload=None, state="deferred")
             live.start_agent(agent.name, f"{agent.model} · attempt {first_attempt}")
             for attempt in range(first_attempt, first_attempt + plan.retries + 1):
+                if pause_event.is_set():
+                    break
                 attempt_path = agent_attempts_dir / f"attempt-{attempt}.json"
                 live.update_agent(agent.name, f"{agent.model} · attempt {attempt} starting")
                 last = await execute_agent(
@@ -417,12 +587,21 @@ async def launch_plan(
                 contract_errors = annotate_report_contract(last)
                 atomic_json(attempt_path, last)
                 atomic_json(final_path, last)
+                global_failure = classify_global_provider_failure(last)
+                if global_failure is not None:
+                    await trip_global_failure(agent, last, global_failure)
+                    break
                 if payload_succeeded(last, expected_agent=agent.name):
                     break
                 prior_report_contract_errors = contract_errors or None
-        assert last is not None
+                # Give other completed sessions a scheduling point to trip the
+                # global breaker before this worker begins another attempt.
+                await asyncio.sleep(0)
+        if last is None:
+            return WorkerOutcome(agent=agent, payload=None, state="deferred")
         await record_progress(agent, last, False)
-        return last, False
+        state = "completed" if payload_succeeded(last, expected_agent=agent.name) else "failed"
+        return WorkerOutcome(agent=agent, payload=last, state=state)
 
     try:
         outcomes = await asyncio.gather(*(worker(agent) for agent in plan.agents))
@@ -432,8 +611,11 @@ async def launch_plan(
             for line in progress_lines:
                 print(line, flush=True)
 
-    outputs = [payload for payload, _ in outcomes]
-    skipped = sum(was_skipped for _, was_skipped in outcomes)
+    outputs = [outcome.payload for outcome in outcomes if outcome.payload is not None]
+    skipped = sum(outcome.was_skipped for outcome in outcomes)
+    completed_agents = [outcome.agent.name for outcome in outcomes if outcome.state == "completed"]
+    failed_agents = [outcome.agent.name for outcome in outcomes if outcome.state == "failed"]
+    deferred_agents = [outcome.agent.name for outcome in outcomes if outcome.state == "deferred"]
 
     attempt_payloads = [
         payload
@@ -442,20 +624,26 @@ async def launch_plan(
     ]
     attempt_costs = [payload.get("result", {}).get("total_cost_usd") for payload in attempt_payloads]
     known_costs = [float(cost) for cost in attempt_costs if isinstance(cost, (int, float))]
-    succeeded = sum(
-        payload_succeeded(payload, expected_agent=agent.name)
-        for payload, agent in zip(outputs, plan.agents, strict=True)
-    )
+    succeeded = len(completed_agents)
     report_status_counts: dict[str, int] = {}
     for payload in outputs:
         status = payload_report_status(payload)
         report_status_counts[status] = report_status_counts.get(status, 0) + 1
+    finalized_at = utc_now()
+    paused = pause_failure is not None
     summary = {
         "run_id": plan.run_dir.name,
-        "completed_at": utc_now(),
-        "agent_count": len(outputs),
+        "status": "paused" if paused else "complete",
+        "completed_at": None if paused else finalized_at,
+        "paused_at": pause_failure["paused_at"] if pause_failure is not None else None,
+        "agent_count": len(plan.agents),
+        "completed": len(outputs),
         "succeeded": succeeded,
-        "failed": len(outputs) - succeeded,
+        "failed": len(failed_agents),
+        "deferred": len(deferred_agents),
+        "completed_agents": completed_agents,
+        "failed_agents": failed_agents,
+        "deferred_agents": deferred_agents,
         "skipped_successful": skipped,
         "report_status_counts": report_status_counts,
         "attempt_count": len(attempt_payloads),
@@ -464,10 +652,38 @@ async def launch_plan(
         "estimated_total_cost_usd": round(sum(known_costs), 6),
         "results_dir": str(results_dir),
         "attempts_dir": str(attempts_root),
+        "pause": dict(pause_failure) if pause_failure is not None else None,
     }
-    progress["completed_at"] = summary["completed_at"]
-    progress["updated_at"] = summary["completed_at"]
-    progress["report_status_counts"] = report_status_counts
+    progress.update({
+        "status": summary["status"],
+        "completed_at": summary["completed_at"],
+        "paused_at": summary["paused_at"],
+        "updated_at": finalized_at,
+        "completed": len(outputs),
+        "valid_reports": succeeded,
+        "failed": len(failed_agents),
+        "deferred": len(deferred_agents),
+        "completed_agents": completed_agents,
+        "failed_agents": failed_agents,
+        "deferred_agents": deferred_agents,
+        "report_status_counts": report_status_counts,
+        "pause": dict(pause_failure) if pause_failure is not None else None,
+    })
     atomic_json(progress_path, progress)
     atomic_json(plan.run_dir / "summary.json", summary)
+    if pause_failure is not None:
+        atomic_json(pause_path, {
+            "run_id": plan.run_dir.name,
+            "status": "paused",
+            **pause_failure,
+            "resume_run_id": plan.run_dir.name,
+            "completed_agents": completed_agents,
+            "failed_agents": failed_agents,
+            "deferred_agents": deferred_agents,
+            "summary_path": str(plan.run_dir / "summary.json"),
+        })
+    elif previous_pause is not None and previous_pause.get("status") == "paused":
+        previous_pause["status"] = "resumed"
+        previous_pause["resumed_at"] = finalized_at
+        atomic_json(pause_path, previous_pause)
     return summary
