@@ -32,7 +32,9 @@ Require `mechanically_qualified: true`, then perform semantic review for source 
 
 ## Recovery
 
-Reuse the same `--run-id` to resume. Valid successful reports are skipped. Failed, malformed, or report-contract-invalid reports receive a new attempt number. Contract violations are preserved on each attempt and supplied to the next configured retry as repair feedback. Changing the task, campaign, or roster under an existing run ID is rejected.
+Reuse the same `--run-id` to resume. Valid successful reports are skipped. Failed, malformed, or report-contract-invalid reports receive a new attempt number. Contract violations are preserved on each attempt and supplied to the first new attempt after resume, as well as to later configured retries. Changing the task, campaign, or roster under an existing run ID is rejected.
+
+Claude session-limit, account-quota, and authentication failures are campaign-wide pauses. The runner stops admitting queued agents, drains already-active attempts, writes `pause.json` plus a partial progress and summary record, and exits nonzero with a `Run paused` message. Resolve the provider issue, then repeat the launch command with the same run ID. Do not manufacture runner-failure results for agents listed as deferred.
 
 ## Large launches
 
@@ -52,6 +54,7 @@ Inspect:
 ```text
 runs/<run-id>/progress.json
 runs/<run-id>/summary.json
+runs/<run-id>/pause.json
 runs/<run-id>/results/
 runs/<run-id>/attempts/
 ```

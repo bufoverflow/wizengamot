@@ -263,6 +263,7 @@ A run produces:
 ├── manifest.json
 ├── progress.json
 ├── summary.json
+├── pause.json                 # present after a global provider pause
 ├── results/
 │   └── <agent-name>.json
 └── attempts/
@@ -277,6 +278,9 @@ Behavior:
 - Existing successful reports are skipped by default.
 - Failed, malformed, or report-contract-invalid reports remain saved and eligible for a later attempt.
 - Provenance violations are stored in `report_contract_errors`, prevent success, and are supplied to the next configured retry as repair feedback.
+- Saved provenance violations are restored on the first new attempt after resuming a contract-invalid result.
+- Claude session limits, exhausted account quota, and authentication failures pause the whole run without consuming runner retries. In-flight attempts drain and persist; queued agents remain deferred with no result file.
+- A paused run writes explicit completed, failed, and deferred agent lists to `progress.json`, `summary.json`, and `pause.json`, then resumes under the same run ID after the provider issue is resolved.
 - Reusing a run ID with a different task, campaign, or roster is rejected.
 - Run IDs reject path traversal.
 - Retries default to zero.
