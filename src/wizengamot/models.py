@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+STAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,50 @@ class AgentRecord:
 
 
 @dataclass(frozen=True)
+class PostSourceStage:
+    name: str
+    agent_name: str
+    model: str
+    effort: str
+    max_turns: int
+    budget_usd: float
+    retries: int
+    task: str
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "PostSourceStage":
+        stage = cls(
+            name=str(value["name"]),
+            agent_name=str(value["agent"]),
+            model=str(value["model"]),
+            effort=str(value.get("effort", "max")),
+            max_turns=int(value.get("max_turns", 36)),
+            budget_usd=float(value["budget_usd"]),
+            retries=int(value.get("retries", 1)),
+            task=str(value["task"]),
+        )
+        if not STAGE_NAME_RE.fullmatch(stage.name):
+            raise ValueError(f"Invalid post-source stage name: {stage.name!r}")
+        if not stage.agent_name.strip():
+            raise ValueError(f"Post-source stage {stage.name!r} requires an agent")
+        if not stage.model.strip():
+            raise ValueError(f"Post-source stage {stage.name!r} requires a model")
+        if stage.effort not in EFFORT_LEVELS:
+            raise ValueError(
+                f"Post-source stage {stage.name!r} has invalid effort {stage.effort!r}"
+            )
+        if stage.max_turns < 1:
+            raise ValueError(f"Post-source stage {stage.name!r} max_turns must be positive")
+        if stage.budget_usd <= 0:
+            raise ValueError(f"Post-source stage {stage.name!r} budget_usd must be positive")
+        if stage.retries < 0:
+            raise ValueError(f"Post-source stage {stage.name!r} retries cannot be negative")
+        if not stage.task.strip():
+            raise ValueError(f"Post-source stage {stage.name!r} requires a task")
+        return stage
+
+
+@dataclass(frozen=True)
 class Campaign:
     name: str
     description: str
@@ -53,9 +102,17 @@ class Campaign:
     prompt: str
     default_concurrency: int
     default_agent_budget_usd: float
+    post_source_pipeline: tuple[PostSourceStage, ...] = ()
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "Campaign":
+        raw_pipeline = value.get("post_source_pipeline", {})
+        if not isinstance(raw_pipeline, dict):
+            raise ValueError("post_source_pipeline must be an object")
+        pipeline = raw_pipeline
+        raw_stages = pipeline.get("stages", [])
+        if not isinstance(raw_stages, list):
+            raise ValueError("post_source_pipeline.stages must be an array")
         return cls(
             name=str(value["name"]),
             description=str(value["description"]),
@@ -63,6 +120,7 @@ class Campaign:
             prompt=str(value["prompt"]),
             default_concurrency=int(value["default_concurrency"]),
             default_agent_budget_usd=float(value["default_agent_budget_usd"]),
+            post_source_pipeline=tuple(PostSourceStage.from_dict(stage) for stage in raw_stages),
         )
 
 

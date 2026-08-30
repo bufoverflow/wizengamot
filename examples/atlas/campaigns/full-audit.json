@@ -16,5 +16,29 @@
   },
   "prompt": "Audit Atlas pilot readiness. Preserve independent reasoning, attack unsupported claims, and return decision-relevant findings.",
   "default_concurrency": 5,
-  "default_agent_budget_usd": 0.5
+  "default_agent_budget_usd": 0.5,
+  "post_source_pipeline": {
+    "stages": [
+      {
+        "name": "frontier-master-synthesis",
+        "agent": "atlas-synthesis-decision-memo",
+        "model": "claude-fable-5",
+        "effort": "max",
+        "max_turns": 36,
+        "budget_usd": 10.0,
+        "retries": 1,
+        "task": "Reconcile the complete qualified source corpus into one traceable pilot decision. Preserve dissent, separate underlying evidence from model reasoning, identify the strongest null case, and recommend proceed, narrow, pivot, pause, or stop with decisive next tests."
+      },
+      {
+        "name": "independent-opus-challenge",
+        "agent": "atlas-council-adversarial-review",
+        "model": "claude-opus-5",
+        "effort": "max",
+        "max_turns": 32,
+        "budget_usd": 5.0,
+        "retries": 1,
+        "task": "Independently challenge the frontier synthesis against the qualified source corpus. Find unsupported compression, omitted dissent, source-scope overreach, arithmetic or provenance errors, and decision-changing counterarguments. Classify every objection as blocking or non-blocking and do not treat agreement as evidence."
+      }
+    ]
+  }
 }

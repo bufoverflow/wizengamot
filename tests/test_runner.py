@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "examples/atlas"
 sys.path.insert(0, str(ROOT / "src"))
 
-from wizengamot.models import LaunchPlan
+from wizengamot.models import LaunchPlan, PostSourceStage
 from wizengamot.registry import load_agents
 from wizengamot.runner import (
     DENIED_TOOLS,
@@ -24,6 +24,8 @@ from wizengamot.runner import (
     classify_global_provider_failure,
     execute_agent,
     launch_plan,
+    launch_post_source_pipeline,
+    post_source_pipeline_ceiling,
     session_limit_wait_seconds,
 )
 
@@ -98,6 +100,299 @@ def provenance_report(agent_name: str, *, valid: bool) -> dict:
 
 
 class RunnerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_post_source_pipeline_runs_fable_then_opus_after_contract_gate(self):
+        agents = tuple(load_agents(WORKSPACE))
+        source_agent = next(
+            agent for agent in agents
+            if agent.name == "atlas-research-quality-falsification-agent"
+        )
+        fable_template = next(
+            agent for agent in agents
+            if agent.name == "atlas-synthesis-decision-memo"
+        )
+        opus_template = next(
+            agent for agent in agents
+            if agent.name == "atlas-council-adversarial-review"
+        )
+        stages = (
+            PostSourceStage(
+                name="frontier-synthesis",
+                agent_name=fable_template.name,
+                model="claude-fable-5",
+                effort="max",
+                max_turns=40,
+                budget_usd=10.0,
+                retries=1,
+                task="Produce the master decision.",
+            ),
+            PostSourceStage(
+                name="opus-challenge",
+                agent_name=opus_template.name,
+                model="claude-opus-5",
+                effort="max",
+                max_turns=32,
+                budget_usd=5.0,
+                retries=1,
+                task="Challenge the master decision.",
+            ),
+        )
+        calls: list[LaunchPlan] = []
+
+        async def fake_launch_plan(**kwargs):
+            stage_plan = kwargs["plan"]
+            calls.append(stage_plan)
+            stage_agent = stage_plan.agents[0]
+            result_path = stage_plan.run_dir / "results" / f"{stage_agent.name}.json"
+            atomic_json(result_path, fake_payload(stage_agent, 1, success=True, cost=0.25))
+            return {
+                "run_id": stage_plan.run_dir.name,
+                "status": "complete",
+                "succeeded": 1,
+                "failed": 0,
+                "deferred": 0,
+                "estimated_total_cost_usd": 0.25,
+                "session_reset_count": 0,
+            }
+
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "source-run"
+            source_plan = LaunchPlan(
+                agents=(source_agent,),
+                task="Synthetic source task",
+                concurrency=1,
+                per_agent_budget_usd=0.5,
+                retries=0,
+                aggregate_ceiling_usd=0.5,
+                run_dir=run_dir,
+            )
+            atomic_json(
+                run_dir / "results" / f"{source_agent.name}.json",
+                fake_payload(source_agent, 1, success=True, cost=0.1),
+            )
+            with patch("wizengamot.runner.launch_plan", side_effect=fake_launch_plan):
+                result = await launch_post_source_pipeline(
+                    root=WORKSPACE,
+                    source_plan=source_plan,
+                    source_summary={
+                        "status": "complete",
+                        "failed": 0,
+                        "deferred": 0,
+                    },
+                    stages=stages,
+                    agents=agents,
+                )
+
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual(result["estimated_total_cost_usd"], 0.5)
+            self.assertEqual([plan.agents[0].model for plan in calls], [
+                "claude-fable-5",
+                "claude-opus-5",
+            ])
+            self.assertEqual([plan.agents[0].effort for plan in calls], ["max", "max"])
+            self.assertIn("source-run/results", calls[0].task)
+            self.assertIn("frontier-synthesis", calls[1].task)
+            self.assertIn("atlas-synthesis-decision-memo.json", calls[1].task)
+            self.assertTrue(result["final_result_path"].endswith(
+                "atlas-council-adversarial-review.json"
+            ))
+            saved = json.loads((run_dir / "post-source-pipeline.json").read_text())
+            self.assertEqual(saved["definition"]["source_run_id"], "source-run")
+            self.assertEqual(len(saved["stages"]), 2)
+            corpus_index = json.loads((run_dir / "source-corpus-index.json").read_text())
+            self.assertEqual(corpus_index["report_count"], 1)
+            self.assertEqual(
+                corpus_index["source_corpus_sha256"],
+                saved["definition"]["source_corpus_sha256"],
+            )
+            self.assertEqual(corpus_index["reports"][0]["agent_name"], source_agent.name)
+
+    async def test_post_source_pipeline_does_not_run_on_invalid_source_contract(self):
+        agents = tuple(load_agents(WORKSPACE))
+        source_agent = next(iter(agents))
+        stage = PostSourceStage(
+            name="frontier-synthesis",
+            agent_name="atlas-synthesis-decision-memo",
+            model="claude-fable-5",
+            effort="max",
+            max_turns=36,
+            budget_usd=10.0,
+            retries=1,
+            task="Produce the master decision.",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "invalid-source-run"
+            source_plan = LaunchPlan(
+                agents=(source_agent,),
+                task="Synthetic source task",
+                concurrency=1,
+                per_agent_budget_usd=0.5,
+                retries=0,
+                aggregate_ceiling_usd=0.5,
+                run_dir=run_dir,
+            )
+            (run_dir / "results").mkdir(parents=True)
+            with patch("wizengamot.runner.launch_plan") as mocked_launch:
+                result = await launch_post_source_pipeline(
+                    root=WORKSPACE,
+                    source_plan=source_plan,
+                    source_summary={
+                        "status": "complete",
+                        "failed": 0,
+                        "deferred": 0,
+                    },
+                    stages=(stage,),
+                    agents=agents,
+                )
+
+            self.assertEqual(result["status"], "blocked-source-contract")
+            self.assertFalse(result["source_contract"]["mechanically_qualified"])
+            mocked_launch.assert_not_called()
+
+            atomic_json(
+                run_dir / "results" / f"{source_agent.name}.json",
+                fake_payload(source_agent, 1, success=True, cost=0.1),
+            )
+
+            async def fake_stage_launch(**kwargs):
+                stage_plan = kwargs["plan"]
+                stage_agent = stage_plan.agents[0]
+                atomic_json(
+                    stage_plan.run_dir / "results" / f"{stage_agent.name}.json",
+                    fake_payload(stage_agent, 1, success=True, cost=0.2),
+                )
+                return {
+                    "status": "complete",
+                    "succeeded": 1,
+                    "failed": 0,
+                    "deferred": 0,
+                    "estimated_total_cost_usd": 0.2,
+                    "session_reset_count": 0,
+                }
+
+            with patch("wizengamot.runner.launch_plan", side_effect=fake_stage_launch):
+                resumed = await launch_post_source_pipeline(
+                    root=WORKSPACE,
+                    source_plan=source_plan,
+                    source_summary={"status": "complete", "failed": 0, "deferred": 0},
+                    stages=(stage,),
+                    agents=agents,
+                )
+            self.assertEqual(resumed["status"], "complete")
+
+    async def test_post_source_pipeline_resume_skips_completed_stages(self):
+        agents = tuple(load_agents(WORKSPACE))
+        source_agent = next(
+            agent for agent in agents
+            if agent.name == "atlas-research-quality-falsification-agent"
+        )
+        stages = (
+            PostSourceStage(
+                name="frontier-synthesis",
+                agent_name="atlas-synthesis-decision-memo",
+                model="claude-fable-5",
+                effort="max",
+                max_turns=40,
+                budget_usd=10.0,
+                retries=1,
+                task="Produce the master decision.",
+            ),
+            PostSourceStage(
+                name="opus-challenge",
+                agent_name="atlas-council-adversarial-review",
+                model="claude-opus-5",
+                effort="max",
+                max_turns=32,
+                budget_usd=5.0,
+                retries=1,
+                task="Challenge the master decision.",
+            ),
+        )
+        calls: list[tuple[str, int]] = []
+
+        async def fake_execute_agent(**kwargs):
+            agent = kwargs["agent"]
+            calls.append((agent.model, kwargs["attempt"]))
+            payload = fake_payload(agent, kwargs["attempt"], success=True, cost=0.25)
+            atomic_json(kwargs["output_path"], payload)
+            return payload
+
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "resumable-source-run"
+            source_plan = LaunchPlan(
+                agents=(source_agent,),
+                task="Synthetic source task",
+                concurrency=1,
+                per_agent_budget_usd=0.5,
+                retries=0,
+                aggregate_ceiling_usd=0.5,
+                run_dir=run_dir,
+            )
+            atomic_json(
+                run_dir / "results" / f"{source_agent.name}.json",
+                fake_payload(source_agent, 1, success=True, cost=0.1),
+            )
+            with patch("wizengamot.runner.execute_agent", side_effect=fake_execute_agent):
+                first = await launch_post_source_pipeline(
+                    root=WORKSPACE,
+                    source_plan=source_plan,
+                    source_summary={"status": "complete", "failed": 0, "deferred": 0},
+                    stages=stages,
+                    agents=agents,
+                )
+                second = await launch_post_source_pipeline(
+                    root=WORKSPACE,
+                    source_plan=source_plan,
+                    source_summary={"status": "complete", "failed": 0, "deferred": 0},
+                    stages=stages,
+                    agents=agents,
+                )
+
+            self.assertEqual(first["status"], "complete")
+            self.assertEqual(second["status"], "complete")
+            self.assertEqual(calls, [("claude-fable-5", 1), ("claude-opus-5", 1)])
+            for record in second["stages"]:
+                child = run_dir.parent / record["run_id"]
+                manifest = json.loads((child / "manifest.json").read_text())
+                self.assertEqual(len(manifest["launch_history"]), 2)
+
+            atomic_json(
+                run_dir / "results" / f"{source_agent.name}.json",
+                fake_payload(source_agent, 2, success=True, cost=0.2),
+            )
+            with self.assertRaisesRegex(ValueError, "source corpus.*changed"):
+                await launch_post_source_pipeline(
+                    root=WORKSPACE,
+                    source_plan=source_plan,
+                    source_summary={"status": "complete", "failed": 0, "deferred": 0},
+                    stages=stages,
+                    agents=agents,
+                )
+
+    def test_post_source_pipeline_ceiling_includes_repair_attempts(self):
+        stages = (
+            PostSourceStage(
+                name="frontier-synthesis",
+                agent_name="atlas-synthesis-decision-memo",
+                model="claude-fable-5",
+                effort="max",
+                max_turns=36,
+                budget_usd=10.0,
+                retries=1,
+                task="Synthesize.",
+            ),
+            PostSourceStage(
+                name="opus-challenge",
+                agent_name="atlas-council-adversarial-review",
+                model="claude-opus-5",
+                effort="max",
+                max_turns=32,
+                budget_usd=5.0,
+                retries=2,
+                task="Challenge.",
+            ),
+        )
+        self.assertEqual(post_source_pipeline_ceiling(stages), 35.0)
+
     def test_check_run_contract_reports_mechanical_qualification(self):
         with tempfile.TemporaryDirectory() as td:
             run_dir = Path(td) / "qualified-run"

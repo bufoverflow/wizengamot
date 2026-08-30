@@ -13,7 +13,17 @@ from .activation import activate, clear_activated
 from .governance import analysis_guard_blocked, note_analysis_run, record_external_action
 from .models import LaunchPlan
 from .registry import load_agents, load_campaign, select_agents, select_campaign
-from .runner import DENIED_TOOLS, READ_ONLY_TOOLS, check_run_contract, launch_plan, make_run_id
+from .runner import (
+    DENIED_TOOLS,
+    READ_ONLY_TOOLS,
+    atomic_json,
+    check_run_contract,
+    launch_plan,
+    launch_post_source_pipeline,
+    make_run_id,
+    post_source_pipeline_ceiling,
+    read_json,
+)
 from .validation import validate
 from .workspace import load_workspace_config, resolve_workspace
 
@@ -63,8 +73,20 @@ def read_task(args: argparse.Namespace) -> str:
     return task
 
 
-def plan_dict(selected, campaign, concurrency: int, agent_budget: float, retries: int, workspace: Path) -> dict:
-    ceiling = len(selected) * agent_budget * (retries + 1)
+def plan_dict(
+    selected,
+    campaign,
+    concurrency: int,
+    agent_budget: float,
+    retries: int,
+    workspace: Path,
+    *,
+    include_post_source: bool = True,
+) -> dict:
+    source_ceiling = len(selected) * agent_budget * (retries + 1)
+    stages = campaign.post_source_pipeline if campaign and include_post_source else ()
+    pipeline_ceiling = post_source_pipeline_ceiling(stages)
+    ceiling = source_ceiling + pipeline_ceiling
     return {
         "workspace": str(workspace),
         "campaign": campaign.name if campaign else None,
@@ -75,7 +97,23 @@ def plan_dict(selected, campaign, concurrency: int, agent_budget: float, retries
         "waves": (len(selected) + concurrency - 1) // concurrency if selected else 0,
         "per_agent_budget_usd": agent_budget,
         "retries": retries,
+        "source_ceiling_usd": round(source_ceiling, 2),
+        "post_source_ceiling_usd": pipeline_ceiling,
         "nominal_configured_ceiling_usd": round(ceiling, 2),
+        "post_source_configured": bool(campaign and campaign.post_source_pipeline),
+        "post_source_enabled": bool(stages),
+        "post_source_pipeline": [
+            {
+                "name": stage.name,
+                "agent": stage.agent_name,
+                "model": stage.model,
+                "effort": stage.effort,
+                "max_turns": stage.max_turns,
+                "budget_usd": stage.budget_usd,
+                "retries": stage.retries,
+            }
+            for stage in stages
+        ],
         "large_run_ack_required": len(selected) >= LARGE_RUN_THRESHOLD,
         "agents": [a.name for a in selected],
     }
@@ -125,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--concurrency", type=int)
     p_plan.add_argument("--max-agent-budget", type=float)
     p_plan.add_argument("--retries", type=int, default=0)
+    p_plan.add_argument("--no-post-source", action="store_true")
     p_plan.add_argument("--json", action="store_true")
 
     p_launch = sub.add_parser("launch", help="Dry-run or execute independent Agent SDK sessions")
@@ -141,6 +180,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_launch.add_argument("--ack-large-run", type=int)
     p_launch.add_argument("--unsafe-high-concurrency", action="store_true")
     p_launch.add_argument("--no-skip-existing", action="store_true")
+    p_launch.add_argument(
+        "--no-post-source",
+        action="store_true",
+        help="Run only the source roster even when the campaign defines post-source stages",
+    )
     p_launch.add_argument(
         "--analysis-exempt",
         choices=ANALYSIS_EXEMPTIONS,
@@ -235,7 +279,12 @@ def main(argv: list[str] | None = None) -> int:
             from importlib.metadata import version
             from claude_agent_sdk import ClaudeAgentOptions
 
-            profiles = [("opus", "xhigh"), ("sonnet", "high"), ("haiku", "medium")]
+            profiles = [
+                ("fable", "max"),
+                ("opus", "xhigh"),
+                ("sonnet", "high"),
+                ("haiku", "medium"),
+            ]
             options = []
             for model, effort in profiles:
                 options.append(ClaudeAgentOptions(
@@ -339,7 +388,24 @@ def main(argv: list[str] | None = None) -> int:
         print("No agents selected.", file=sys.stderr)
         return 2
 
-    preview = plan_dict(selected, campaign, concurrency, agent_budget, args.retries, root)
+    campaign_roster = select_campaign(campaign, agents) if campaign else []
+    exact_campaign_roster = (
+        bool(campaign)
+        and [agent.name for agent in selected] == [agent.name for agent in campaign_roster]
+    )
+    include_post_source = (
+        not getattr(args, "no_post_source", False)
+        and exact_campaign_roster
+    )
+    preview = plan_dict(
+        selected,
+        campaign,
+        concurrency,
+        agent_budget,
+        args.retries,
+        root,
+        include_post_source=include_post_source,
+    )
     if args.command == "plan":
         if args.json:
             print(json.dumps(preview, indent=2))
@@ -424,15 +490,74 @@ def main(argv: list[str] | None = None) -> int:
         aggregate_ceiling_usd=authorized,
         run_dir=run_dir,
     )
-    try:
-        summary = asyncio.run(launch_plan(
+    async def execute_workflow() -> dict:
+        summary = await launch_plan(
             root=root,
             plan=plan,
             campaign_name=campaign.name if campaign else None,
             campaign_prompt=campaign.prompt if campaign else None,
             skip_existing=not args.no_skip_existing,
             emit_progress=True,
-        ))
+        )
+        stages = campaign.post_source_pipeline if campaign and include_post_source else ()
+        if not stages:
+            return summary
+        pipeline = await launch_post_source_pipeline(
+            root=root,
+            source_plan=plan,
+            source_summary=summary,
+            stages=stages,
+            agents=tuple(agents),
+            emit_progress=True,
+        )
+        source_status = summary.get("status")
+        summary["source_status"] = source_status
+        summary["post_source_pipeline"] = pipeline
+        pipeline_cost = float(pipeline.get("estimated_total_cost_usd", 0.0))
+        summary["post_source_estimated_cost_usd"] = pipeline_cost
+        summary["workflow_estimated_total_cost_usd"] = round(
+            float(summary.get("estimated_total_cost_usd", 0.0)) + pipeline_cost,
+            6,
+        )
+        summary["workflow_session_reset_count"] = (
+            int(summary.get("session_reset_count", 0))
+            + int(pipeline.get("session_reset_count", 0))
+        )
+        pipeline_status = pipeline.get("status")
+        if pipeline_status == "complete":
+            summary["status"] = "complete"
+        elif pipeline_status == "paused":
+            summary["status"] = "paused"
+            pipeline_pause = pipeline.get("pause")
+            pipeline_pause = pipeline_pause if isinstance(pipeline_pause, dict) else {}
+            stage_records = pipeline.get("stages")
+            stage_records = stage_records if isinstance(stage_records, list) else []
+            active_stage = stage_records[-1] if stage_records else {}
+            parent_pause = {
+                **pipeline_pause,
+                "run_id": plan.run_dir.name,
+                "status": "paused",
+                "resume_run_id": plan.run_dir.name,
+                "pipeline_stage_run_id": active_stage.get("run_id"),
+                "pipeline_stage": active_stage.get("name"),
+            }
+            summary["pause"] = parent_pause
+            atomic_json(plan.run_dir / "pause.json", parent_pause)
+        elif source_status == "complete" and summary.get("failed", 0) == 0:
+            summary["status"] = str(pipeline_status)
+        atomic_json(plan.run_dir / "summary.json", summary)
+        progress = read_json(plan.run_dir / "progress.json") or {"run_id": plan.run_dir.name}
+        progress.update({
+            "status": summary["status"],
+            "post_source_pipeline_status": pipeline_status,
+            "post_source_pipeline_path": str(plan.run_dir / "post-source-pipeline.json"),
+            "workflow_session_reset_count": summary["workflow_session_reset_count"],
+        })
+        atomic_json(plan.run_dir / "progress.json", progress)
+        return summary
+
+    try:
+        summary = asyncio.run(execute_workflow())
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Launch failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
@@ -460,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(json.dumps(summary, indent=2))
-    return 0 if summary["failed"] == 0 and summary.get("status") != "paused" else 1
+    return 0 if summary["failed"] == 0 and summary.get("status") == "complete" else 1
 
 
 if __name__ == "__main__":

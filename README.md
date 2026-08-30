@@ -131,6 +131,8 @@ Atlas contains seventeen agents:
 - one synthesis agent
 
 Its source audit selects fifteen independent workers. No paid session starts during `plan`.
+The example campaign also declares a bounded two-stage post-source pipeline: Fable performs the
+master synthesis at maximum effort, then Opus independently challenges it at maximum effort.
 
 ## Interactive Claude Code use
 
@@ -198,7 +200,9 @@ The plan reports:
 - execution waves
 - per-agent ceiling
 - retry count
-- nominal aggregate ceiling
+- source and post-source budget ceilings
+- ordered post-source models, effort, turns, and retries
+- nominal aggregate workflow ceiling
 - whether a large-run acknowledgement is required
 
 ### 3. Calibrate on a small set
@@ -249,8 +253,14 @@ wizengamot --workspace workspace launch \
 The aggregate authorization uses this deterministic pre-launch calculation:
 
 ```text
-selected agents × per-agent ceiling × (retries + 1)
+source agents × source ceiling × (source retries + 1)
++ Σ(post-source stage ceiling × (stage retries + 1))
 ```
+
+Configured post-source stages are included in the original authorization and run automatically
+only after every selected source report passes the runtime contract. Use `--no-post-source` for a
+deliberate source-only launch. Narrowing a campaign with additional selectors also disables its
+post-source pipeline so a partial calibration cannot masquerade as a complete campaign synthesis.
 
 The value is a local launch gate. Provider billing, rate limits, final-turn cost, model availability, and account-level limits remain external.
 
@@ -265,6 +275,8 @@ A run produces:
 ├── summary.json
 ├── pause.json                 # present after a global provider pause
 ├── session-waits.json         # present after automatic session-limit waits
+├── post-source-pipeline.json  # configured stage definitions and current workflow state
+├── source-corpus-index.json   # deterministic structured index with full-report pointers
 ├── results/
 │   └── <agent-name>.json
 └── attempts/
@@ -303,9 +315,56 @@ The command is read-only and exits nonzero when a selected result is missing, un
 
 ## Source analysis and synthesis
 
-Source workers should execute before synthesis. This ordering limits conclusion leakage and correlated reasoning.
+Source workers execute before synthesis. This ordering limits conclusion leakage and correlated reasoning.
 
-A synthesis pass selects a dedicated synthesis agent and points it at completed reports:
+When a campaign defines `post_source_pipeline.stages`, the original launch automatically:
+
+1. finishes or resumes the source roster;
+2. checks the exact source roster for contract-valid reports;
+3. fingerprints the qualified result set and builds a deterministic structured corpus index;
+4. runs each synthesis or challenge stage sequentially under a deterministic child run ID;
+5. preserves stage attempts, costs, contract feedback, and session-reset recovery independently; and
+6. writes the combined state to `post-source-pipeline.json` and the parent `summary.json`.
+
+Example campaign configuration:
+
+```json
+{
+  "post_source_pipeline": {
+    "stages": [
+      {
+        "name": "frontier-master-synthesis",
+        "agent": "atlas-synthesis-decision-memo",
+        "model": "claude-fable-5",
+        "effort": "max",
+        "max_turns": 36,
+        "budget_usd": 10.0,
+        "retries": 1,
+        "task": "Reconcile the qualified corpus into one traceable decision."
+      },
+      {
+        "name": "independent-opus-challenge",
+        "agent": "atlas-council-adversarial-review",
+        "model": "claude-opus-5",
+        "effort": "max",
+        "max_turns": 32,
+        "budget_usd": 5.0,
+        "retries": 1,
+        "task": "Challenge the frontier synthesis against the qualified corpus."
+      }
+    ]
+  }
+}
+```
+
+The second and later stages receive the preceding stage result paths in addition to the complete
+qualified source directory. Frontier synthesis begins from `source-corpus-index.json`, which retains
+structured decision fields and full-report paths without adding another model-generated summary.
+The source fingerprint is part of pipeline identity, so a changed report cannot silently reuse stale
+synthesis. Mechanical qualification gates synthesis but does not turn source reports—or model
+agreement—into empirical evidence.
+
+Campaigns without a configured pipeline can still run synthesis manually:
 
 ```bash
 wizengamot --workspace workspace launch \
