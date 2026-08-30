@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .live import LiveTail, describe_sdk_message
+from .live import LiveTail, SessionWaitDisplay, describe_sdk_message, style_status_line
 from .models import AgentRecord, LaunchPlan
 from .prompts import build_system_prompt, build_task_prompt, load_output_schema
 from .report_contract import annotate_report_contract, payload_contract_errors
@@ -683,6 +683,7 @@ async def _launch_plan_pass(
                     f"[{progress['completed']:03d}/{progress['total']:03d}] "
                     f"{report_status:<12} {agent.name}{suffix}"
                 )
+                line = style_status_line(line, report_status, stream=sys.stdout)
                 if live.enabled:
                     progress_lines.append(line)
                 else:
@@ -935,17 +936,20 @@ async def launch_plan(
         source_agent = failure.get("agent_name")
         if isinstance(source_agent, str):
             eligible_agent_names.add(source_agent)
-        if emit_progress:
-            print(
-                "Claude session limit reached; run checkpointed. "
-                f"Waiting until {wait_record['resume_at']} before resuming automatically.",
-                file=sys.stderr,
-                flush=True,
-            )
-        await wait_for_session_reset(wait_seconds)
-        if emit_progress:
-            print(
-                f"Claude reset wait complete; resuming run {plan.run_dir.name}.",
-                file=sys.stderr,
-                flush=True,
-            )
+        wait_display = SessionWaitDisplay(
+            run_id=plan.run_dir.name,
+            resume_at=str(wait_record["resume_at"]),
+            wait_seconds=wait_seconds,
+            reset_count=int(summary.get("session_reset_count", 1)),
+            completed=int(summary.get("succeeded", 0)),
+            retrying=1,
+            deferred=len(summary.get("deferred_agents", [])),
+            enabled=emit_progress,
+        )
+        await wait_display.start()
+        try:
+            await wait_for_session_reset(wait_seconds)
+        except BaseException:
+            await wait_display.stop(resuming=False)
+            raise
+        await wait_display.stop(resuming=True)

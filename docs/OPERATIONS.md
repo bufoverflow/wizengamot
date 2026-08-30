@@ -38,6 +38,8 @@ Claude session-limit failures are automatically recoverable within the original 
 
 The final launch result and `summary.json` always report `session_reset_count`; `progress.json`, `pause.json`, and `session-waits.json` expose the count during recovery.
 
+On a TTY, the runner replaces the live activity view with a colored session-reset countdown showing the local resume time and pending work. Redirected logs receive plain `WAITING` and `RESUMING` records with no ANSI escapes. Use `NO_COLOR=1` or `CLICOLOR=0` when an interactive terminal should also remain uncolored.
+
 Account-quota and authentication failures remain manual campaign-wide pauses. They write `pause.json` plus a partial progress and summary record, then exit nonzero with a `Run paused` message. Resolve the provider issue and repeat the launch command with the same run ID. Do not manufacture runner-failure results for agents listed as deferred.
 
 ## Large launches

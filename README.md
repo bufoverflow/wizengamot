@@ -283,6 +283,8 @@ Behavior:
 - Claude session limits checkpoint the run without consuming runner retries. In-flight attempts drain and persist, queued agents remain deferred with no result file, and the original launch waits for the advertised reset before resuming unfinished work automatically.
 - Reset hints with relative durations, ISO timestamps, or local clock times are honored with a small grace window. Unparseable hints use a conservative polling interval; repeated session-limit responses re-enter the wait loop.
 - Session waits are recorded in `session-waits.json`, while `progress.json`, `summary.json`, and `pause.json` expose the current waiting state. The final CLI result and persisted summary always include `session_reset_count` (including zero). The manifest still records one user launch regardless of internal recovery passes.
+- Interactive terminals use color-coded live activity and result statuses. During a session-limit wait, a prominent countdown shows the checkpointed run, local resume time, recovery count, and completed/retrying/deferred totals.
+- Redirected output remains ANSI-free and receives durable `WAITING` and `RESUMING` lines. Set `NO_COLOR` or `CLICOLOR=0` to disable terminal colors.
 - Exhausted account quota and authentication failures remain manual pauses because they do not provide a reliable automatic recovery point.
 - Reusing a run ID with a different task, campaign, or roster is rejected.
 - Run IDs reject path traversal.
