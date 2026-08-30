@@ -19,9 +19,18 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(len({a.name for a in agents}), 17)
 
     def test_full_audit_selection(self):
-        selected = select_campaign(load_campaign("full-audit", WORKSPACE), load_agents(WORKSPACE))
+        campaign = load_campaign("full-audit", WORKSPACE)
+        selected = select_campaign(campaign, load_agents(WORKSPACE))
         self.assertEqual(len(selected), 15)
         self.assertFalse(any(a.tier in {"chief", "synthesis"} for a in selected))
+        self.assertEqual(
+            [stage.model for stage in campaign.post_source_pipeline],
+            ["claude-fable-5", "claude-opus-5"],
+        )
+        self.assertEqual(
+            [stage.effort for stage in campaign.post_source_pipeline],
+            ["max", "max"],
+        )
 
     def test_exact_name_selection(self):
         selected = select_agents(load_agents(WORKSPACE), names=["atlas-council-adversarial-review"])

@@ -9,7 +9,8 @@ wizengamot count
 wizengamot plan --campaign <campaign>
 ```
 
-Review the selected roster, model distribution, concurrency, waves, retry count, and nominal aggregate ceiling.
+Review the selected roster, model distribution, concurrency, waves, retry count, ordered post-source
+stages, and the separate source, post-source, and aggregate workflow ceilings.
 
 Before escalating from a calibration to a more expensive qualifier, recompute the saved result contract:
 
@@ -28,7 +29,27 @@ Require `mechanically_qualified: true`, then perform semantic review for source 
 3. Run one domain campaign.
 4. Review source quality, truncation, cost, and disagreement.
 5. Increase to a large campaign.
-6. Run synthesis separately.
+6. Let the configured post-source pipeline run, or launch synthesis separately when the campaign has no pipeline.
+
+## Frontier synthesis pipeline
+
+A campaign may declare ordered `post_source_pipeline.stages`. The recommended allocation is narrow,
+cheaper models for bounded source work; Opus for local falsification and verification; Fable at
+maximum effort for the master synthesis; and an independent Opus challenge at maximum effort.
+
+The original `launch` command authorizes and owns the full workflow. Synthesis starts only when the
+exact selected source roster is complete and mechanically qualified. Each stage uses a deterministic
+child run ID, so session limits, process interruption, or a manual provider pause resume from the
+unfinished stage when the original command is repeated with the same source run ID.
+
+Before the first stage, the runner writes `source-corpus-index.json`: a deterministic projection of
+structured findings, citations, risks, falsifiers, recommendations, and evidence gaps with pointers
+to every full report. Its source-corpus fingerprint is part of workflow identity. If source results
+change after synthesis has started, the runner rejects stale reuse and requires a new run ID.
+
+`--no-post-source` deliberately suppresses configured stages and removes their ceilings from the
+plan. Additional campaign selectors also suppress the pipeline because they produce a partial source
+roster. Do not use either mechanism merely to bypass an insufficient aggregate authorization.
 
 ## Recovery
 
@@ -37,6 +58,9 @@ Reuse the same `--run-id` to resume. Valid successful reports are skipped. Faile
 Claude session-limit failures are automatically recoverable within the original launch. The runner stops admitting queued agents, drains already-active attempts, writes a durable `waiting-for-session-reset` checkpoint, sleeps until the advertised reset plus a grace interval, and resumes unfinished agents under the same run ID. If the reset hint cannot be parsed or the provider still reports exhaustion, the runner waits and probes again. Completed results are skipped even when the initial command used `--no-skip-existing`.
 
 The final launch result and `summary.json` always report `session_reset_count`; `progress.json`, `pause.json`, and `session-waits.json` expose the count during recovery.
+
+Post-source stages retain their own reset counts. The parent summary reports
+`workflow_session_reset_count`, stage costs, and the final challenge result path.
 
 On a TTY, the runner replaces the live activity view with a colored session-reset countdown showing the local resume time and pending work. Redirected logs receive plain `WAITING` and `RESUMING` records with no ANSI escapes. Use `NO_COLOR=1` or `CLICOLOR=0` when an interactive terminal should also remain uncolored.
 
@@ -62,8 +86,11 @@ runs/<run-id>/progress.json
 runs/<run-id>/summary.json
 runs/<run-id>/pause.json
 runs/<run-id>/session-waits.json
+runs/<run-id>/post-source-pipeline.json
+runs/<run-id>/source-corpus-index.json
 runs/<run-id>/results/
 runs/<run-id>/attempts/
+runs/<run-id>--post-<position>-<stage>/
 ```
 
 Do not treat repeated conclusions as independent corroboration when agents share the same project corpus.

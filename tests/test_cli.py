@@ -18,6 +18,88 @@ from wizengamot.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_plan_includes_bounded_post_source_pipeline_budget(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = main([
+                "--workspace", str(WORKSPACE),
+                "plan", "--campaign", "full-audit",
+                "--max-agent-budget", "0.50",
+                "--json",
+            ])
+        self.assertEqual(code, 0)
+        value = json.loads(stdout.getvalue())
+        self.assertEqual(value["source_ceiling_usd"], 7.5)
+        self.assertEqual(value["post_source_ceiling_usd"], 30.0)
+        self.assertEqual(value["nominal_configured_ceiling_usd"], 37.5)
+        self.assertTrue(value["post_source_configured"])
+        self.assertTrue(value["post_source_enabled"])
+        self.assertEqual(
+            [stage["model"] for stage in value["post_source_pipeline"]],
+            ["claude-fable-5", "claude-opus-5"],
+        )
+        self.assertEqual(
+            [stage["effort"] for stage in value["post_source_pipeline"]],
+            ["max", "max"],
+        )
+
+    def test_plan_can_explicitly_disable_post_source_pipeline(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = main([
+                "--workspace", str(WORKSPACE),
+                "plan", "--campaign", "full-audit",
+                "--max-agent-budget", "0.50",
+                "--no-post-source",
+                "--json",
+            ])
+        self.assertEqual(code, 0)
+        value = json.loads(stdout.getvalue())
+        self.assertEqual(value["post_source_ceiling_usd"], 0)
+        self.assertEqual(value["nominal_configured_ceiling_usd"], 7.5)
+        self.assertTrue(value["post_source_configured"])
+        self.assertFalse(value["post_source_enabled"])
+        self.assertEqual(value["post_source_pipeline"], [])
+
+    def test_partial_campaign_selection_does_not_run_whole_campaign_synthesis(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = main([
+                "--workspace", str(WORKSPACE),
+                "plan", "--campaign", "full-audit",
+                "--name", "atlas-research-quality-falsification-agent",
+                "--max-agent-budget", "0.50",
+                "--json",
+            ])
+        self.assertEqual(code, 0)
+        value = json.loads(stdout.getvalue())
+        self.assertEqual(value["agent_count"], 1)
+        self.assertEqual(value["source_ceiling_usd"], 0.5)
+        self.assertEqual(value["post_source_ceiling_usd"], 0)
+        self.assertTrue(value["post_source_configured"])
+        self.assertFalse(value["post_source_enabled"])
+
+    def test_execution_authorization_must_cover_post_source_stages(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch("wizengamot.cli.launch_plan", new=AsyncMock()) as source_launch,
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = main([
+                "--workspace", str(WORKSPACE),
+                "launch", "--campaign", "full-audit",
+                "--max-agent-budget", "0.50",
+                "--max-total-budget", "7.50",
+                "--run-id", "underfunded-pipeline-run",
+                "--analysis-exempt", "runtime-debug",
+                "--execute",
+            ])
+        self.assertEqual(code, 2)
+        self.assertIn("below the nominal configured ceiling $37.50", stderr.getvalue())
+        source_launch.assert_not_awaited()
+
     def test_explicit_zero_budget_is_rejected(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
@@ -114,6 +196,56 @@ class CliTests(unittest.TestCase):
         self.assertIn("Run paused:", stderr.getvalue())
         self.assertIn("same --run-id paused-cli-run", stderr.getvalue())
         self.assertIn('"status": "paused"', stdout.getvalue())
+
+    def test_campaign_launch_automatically_runs_configured_post_source_pipeline(self):
+        source_summary = {
+            "run_id": "automatic-synthesis-run",
+            "status": "complete",
+            "failed": 0,
+            "deferred": 0,
+            "succeeded": 15,
+            "estimated_total_cost_usd": 3.0,
+            "session_reset_count": 1,
+        }
+        pipeline_summary = {
+            "source_run_id": "automatic-synthesis-run",
+            "status": "complete",
+            "estimated_total_cost_usd": 8.0,
+            "session_reset_count": 2,
+            "stages": [
+                {"name": "frontier-master-synthesis", "status": "complete"},
+                {"name": "independent-opus-challenge", "status": "complete"},
+            ],
+        }
+        stdout = io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as td,
+            patch("wizengamot.cli.launch_plan", new=AsyncMock(return_value=source_summary)),
+            patch(
+                "wizengamot.cli.launch_post_source_pipeline",
+                new=AsyncMock(return_value=pipeline_summary),
+            ) as pipeline_launch,
+            contextlib.redirect_stdout(stdout),
+        ):
+            workspace = Path(td) / "atlas"
+            shutil.copytree(WORKSPACE, workspace)
+            code = main([
+                "--workspace", str(workspace),
+                "launch", "--campaign", "full-audit",
+                "--max-agent-budget", "0.50",
+                "--max-total-budget", "37.50",
+                "--run-id", "automatic-synthesis-run",
+                "--analysis-exempt", "runtime-debug",
+                "--execute",
+            ])
+
+        self.assertEqual(code, 0)
+        pipeline_launch.assert_awaited_once()
+        final_start = stdout.getvalue().rfind('\n{\n  "run_id"')
+        value = json.loads(stdout.getvalue()[final_start + 1:])
+        self.assertEqual(value["post_source_pipeline"]["status"], "complete")
+        self.assertEqual(value["workflow_estimated_total_cost_usd"], 11.0)
+        self.assertEqual(value["workflow_session_reset_count"], 3)
 
     def _large_workspace(self, root: Path) -> Path:
         workspace = root / "large"

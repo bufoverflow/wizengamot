@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -8,14 +9,14 @@ import sys
 import tempfile
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .live import LiveTail, SessionWaitDisplay, describe_sdk_message, style_status_line
-from .models import AgentRecord, LaunchPlan
+from .models import AgentRecord, LaunchPlan, PostSourceStage
 from .prompts import build_system_prompt, build_task_prompt, load_output_schema
 from .report_contract import annotate_report_contract, payload_contract_errors
 
@@ -953,3 +954,380 @@ async def launch_plan(
             await wait_display.stop(resuming=False)
             raise
         await wait_display.stop(resuming=True)
+
+
+def _workspace_path(root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def post_source_pipeline_ceiling(stages: tuple[PostSourceStage, ...]) -> float:
+    return round(sum(stage.budget_usd * (stage.retries + 1) for stage in stages), 2)
+
+
+def source_corpus_fingerprint(source_plan: LaunchPlan) -> str | None:
+    digest = hashlib.sha256()
+    for agent in source_plan.agents:
+        path = source_plan.run_dir / "results" / f"{agent.name}.json"
+        try:
+            content = path.read_bytes()
+        except OSError:
+            return None
+        digest.update(agent.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(content)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def build_source_corpus_index(
+    *,
+    root: Path,
+    source_plan: LaunchPlan,
+    fingerprint: str,
+) -> Path:
+    """Write a loss-minimizing structured index with pointers to full reports."""
+
+    report_fields = (
+        "epistemic_notice",
+        "executive_summary",
+        "findings",
+        "risks",
+        "falsifiers",
+        "recommendations",
+        "evidence_gaps",
+        "citations",
+        "evidence_bar_review",
+        "handoff",
+    )
+    records: list[dict[str, Any]] = []
+    counts_by_domain: dict[str, int] = {}
+    counts_by_role: dict[str, int] = {}
+    counts_by_model: dict[str, int] = {}
+    for agent in source_plan.agents:
+        result_path = source_plan.run_dir / "results" / f"{agent.name}.json"
+        payload = read_json(result_path)
+        result = payload.get("result") if isinstance(payload, dict) else None
+        report = result.get("report") if isinstance(result, dict) else None
+        report = report if isinstance(report, dict) else {}
+        records.append({
+            "agent_name": agent.name,
+            "tier": agent.tier,
+            "domain": agent.domain,
+            "role": agent.role,
+            "model": agent.model,
+            "result_path": _workspace_path(root, result_path),
+            "report": {field: report.get(field) for field in report_fields if field in report},
+        })
+        for counts, key in (
+            (counts_by_domain, agent.domain),
+            (counts_by_role, agent.role),
+            (counts_by_model, agent.model),
+        ):
+            counts[key] = counts.get(key, 0) + 1
+
+    index_path = source_plan.run_dir / "source-corpus-index.json"
+    atomic_json(index_path, {
+        "source_run_id": source_plan.run_dir.name,
+        "source_corpus_sha256": fingerprint,
+        "generated_at": utc_now(),
+        "report_count": len(records),
+        "counts_by_domain": counts_by_domain,
+        "counts_by_role": counts_by_role,
+        "counts_by_model": counts_by_model,
+        "scope_note": (
+            "This index preserves structured decision fields and points to every full result payload. "
+            "It is a deterministic projection, not an additional model summary or evidence source."
+        ),
+        "reports": records,
+    })
+    return index_path
+
+
+def build_post_source_task(
+    *,
+    root: Path,
+    source_plan: LaunchPlan,
+    stage: PostSourceStage,
+    prior_result_paths: list[Path],
+    corpus_index_path: Path,
+    corpus_fingerprint: str,
+) -> str:
+    source_results = _workspace_path(root, source_plan.run_dir / "results")
+    source_summary = _workspace_path(root, source_plan.run_dir / "summary.json")
+    source_manifest = _workspace_path(root, source_plan.run_dir / "manifest.json")
+    corpus_index = _workspace_path(root, corpus_index_path)
+    prior = "\n".join(
+        f"- `{_workspace_path(root, path)}`"
+        for path in prior_result_paths
+    ) or "- None; this is the first post-source stage."
+    return (
+        f"Post-source workflow stage: {stage.name}\n\n"
+        f"The authoritative source run is `{source_plan.run_dir.name}`. Its mechanically qualified "
+        f"result payloads are under `{source_results}`. Begin with the deterministic structured index "
+        f"at `{corpus_index}`, whose source-corpus SHA-256 is `{corpus_fingerprint}`. Use its result "
+        f"paths to inspect full reports whenever compression could hide material nuance. Read "
+        f"`{source_manifest}` for the exact source roster and `{source_summary}` for execution state. "
+        "Do not use attempt files as independent "
+        "evidence and do not count repeated model agreement as corroboration. The source reports are "
+        "model-generated reasoning; only the evidence they trace retains its underlying provenance.\n\n"
+        "Prior post-source result payloads:\n"
+        f"{prior}\n\n"
+        f"Stage mandate:\n{stage.task.strip()}\n\n"
+        "Trace material conclusions to source report paths, preserve material dissent, and explicitly "
+        "identify missing or unverified evidence. Populate `source_report_paths` with every report used."
+    )
+
+
+async def launch_post_source_pipeline(
+    *,
+    root: Path,
+    source_plan: LaunchPlan,
+    source_summary: dict[str, Any],
+    stages: tuple[PostSourceStage, ...],
+    agents: tuple[AgentRecord, ...],
+    emit_progress: bool = False,
+) -> dict[str, Any]:
+    """Run ordered frontier synthesis stages after the source corpus qualifies.
+
+    Child run IDs are deterministic, so an interrupted user invocation can be
+    resumed with the original source run ID. Each child retains its own
+    attempts, report-contract feedback, provider waits, and cost accounting.
+    """
+
+    state_path = source_plan.run_dir / "post-source-pipeline.json"
+    corpus_fingerprint = source_corpus_fingerprint(source_plan)
+    definition = {
+        "source_run_id": source_plan.run_dir.name,
+        "source_agents": [agent.name for agent in source_plan.agents],
+        "source_corpus_sha256": corpus_fingerprint,
+        "stages": [asdict(stage) for stage in stages],
+    }
+    existing = read_json(state_path)
+    if state_path.exists() and existing is None:
+        raise ValueError(
+            f"Post-source pipeline state {state_path} exists but is malformed or unreadable. "
+            "Repair the state file or choose a new --run-id."
+        )
+    if existing is not None and existing.get("definition") != definition:
+        previous_definition = existing.get("definition")
+        previous_definition = previous_definition if isinstance(previous_definition, dict) else {}
+        previous_without_corpus = {
+            key: value for key, value in previous_definition.items()
+            if key != "source_corpus_sha256"
+        }
+        current_without_corpus = {
+            key: value for key, value in definition.items()
+            if key != "source_corpus_sha256"
+        }
+        previous_stages = existing.get("stages")
+        previous_stages = previous_stages if isinstance(previous_stages, list) else []
+        corpus_can_advance = (
+            previous_without_corpus == current_without_corpus
+            and not previous_stages
+            and existing.get("status") in {
+                "pending",
+                "waiting-for-source",
+                "blocked-source-contract",
+            }
+        )
+        if not corpus_can_advance:
+            raise ValueError(
+                f"Post-source pipeline or qualified source corpus for run "
+                f"{source_plan.run_dir.name} has changed. Restore the original inputs or choose "
+                "a new --run-id so stale synthesis cannot be reused."
+            )
+
+    now = utc_now()
+    state: dict[str, Any] = {
+        "source_run_id": source_plan.run_dir.name,
+        "status": "pending",
+        "created_at": existing.get("created_at", now) if existing else now,
+        "updated_at": now,
+        "definition": definition,
+        "source_contract": None,
+        "stages": [],
+        "estimated_total_cost_usd": 0.0,
+        "session_reset_count": 0,
+        "pause": None,
+    }
+
+    if (
+        source_summary.get("status") != "complete"
+        or source_summary.get("failed", 0) != 0
+        or source_summary.get("deferred", 0) != 0
+    ):
+        state.update({
+            "status": "waiting-for-source",
+            "updated_at": utc_now(),
+            "reason": "Source run must complete without failed or deferred agents before synthesis.",
+        })
+        atomic_json(state_path, state)
+        return state
+
+    source_names = [agent.name for agent in source_plan.agents]
+    contract = check_run_contract(source_plan.run_dir, names=source_names)
+    state["source_contract"] = {
+        "report_count": contract["report_count"],
+        "mechanically_qualified": contract["mechanically_qualified"],
+        "semantic_review_required": contract["semantic_review_required"],
+    }
+    if not contract["mechanically_qualified"]:
+        state.update({
+            "status": "blocked-source-contract",
+            "updated_at": utc_now(),
+            "reason": "At least one source report is missing, unsuccessful, malformed, or provenance-invalid.",
+        })
+        atomic_json(state_path, state)
+        return state
+
+    if corpus_fingerprint is None:
+        raise ValueError(
+            f"Could not fingerprint every source result for run {source_plan.run_dir.name}"
+        )
+    corpus_index_path = build_source_corpus_index(
+        root=root,
+        source_plan=source_plan,
+        fingerprint=corpus_fingerprint,
+    )
+    state["source_contract"]["source_corpus_sha256"] = corpus_fingerprint
+    state["source_contract"]["corpus_index_path"] = _workspace_path(root, corpus_index_path)
+
+    agents_by_name = {agent.name: agent for agent in agents}
+    prior_result_paths: list[Path] = []
+    total_cost = 0.0
+    total_resets = 0
+    for index, stage in enumerate(stages, start=1):
+        if not RESULT_NAME_RE.fullmatch(stage.name):
+            raise ValueError(f"Invalid post-source stage name: {stage.name}")
+        template = agents_by_name.get(stage.agent_name)
+        if template is None:
+            raise ValueError(
+                f"Post-source stage {stage.name} references unknown agent {stage.agent_name}"
+            )
+        stage_agent = replace(
+            template,
+            model=stage.model,
+            effort=stage.effort,
+            max_turns=stage.max_turns,
+            recommended_budget_usd=stage.budget_usd,
+        )
+        child_run_id = f"{source_plan.run_dir.name}--post-{index:02d}-{stage.name}"
+        child_run_dir = source_plan.run_dir.parent / child_run_id
+        stage_task = build_post_source_task(
+            root=root,
+            source_plan=source_plan,
+            stage=stage,
+            prior_result_paths=prior_result_paths,
+            corpus_index_path=corpus_index_path,
+            corpus_fingerprint=corpus_fingerprint,
+        )
+        stage_plan = LaunchPlan(
+            agents=(stage_agent,),
+            task=stage_task,
+            concurrency=1,
+            per_agent_budget_usd=stage.budget_usd,
+            retries=stage.retries,
+            aggregate_ceiling_usd=stage.budget_usd * (stage.retries + 1),
+            run_dir=child_run_dir,
+        )
+        state["stages"].append({
+            "name": stage.name,
+            "position": index,
+            "run_id": child_run_id,
+            "agent_name": stage_agent.name,
+            "model": stage_agent.model,
+            "effort": stage_agent.effort,
+            "status": "running",
+            "result_path": _workspace_path(
+                root,
+                child_run_dir / "results" / f"{stage_agent.name}.json",
+            ),
+            "summary_path": _workspace_path(root, child_run_dir / "summary.json"),
+        })
+        state.update({
+            "status": "running",
+            "active_stage": stage.name,
+            "active_stage_run_id": child_run_id,
+            "updated_at": utc_now(),
+        })
+        atomic_json(state_path, state)
+        stage_summary = await launch_plan(
+            root=root,
+            plan=stage_plan,
+            campaign_name=None,
+            campaign_prompt=None,
+            skip_existing=True,
+            emit_progress=emit_progress,
+        )
+        result_path = child_run_dir / "results" / f"{stage_agent.name}.json"
+        record = {
+            "name": stage.name,
+            "position": index,
+            "run_id": child_run_id,
+            "agent_name": stage_agent.name,
+            "model": stage_agent.model,
+            "effort": stage_agent.effort,
+            "status": stage_summary.get("status"),
+            "succeeded": stage_summary.get("succeeded", 0),
+            "failed": stage_summary.get("failed", 0),
+            "session_reset_count": stage_summary.get("session_reset_count", 0),
+            "estimated_total_cost_usd": stage_summary.get("estimated_total_cost_usd", 0.0),
+            "result_path": _workspace_path(root, result_path),
+            "summary_path": _workspace_path(root, child_run_dir / "summary.json"),
+        }
+        state["stages"][-1] = record
+        total_cost += float(stage_summary.get("estimated_total_cost_usd", 0.0))
+        total_resets += int(stage_summary.get("session_reset_count", 0))
+        state.update({
+            "status": "running",
+            "updated_at": utc_now(),
+            "estimated_total_cost_usd": round(total_cost, 6),
+            "session_reset_count": total_resets,
+        })
+        atomic_json(state_path, state)
+
+        if stage_summary.get("status") == "paused":
+            state.update({
+                "status": "paused",
+                "updated_at": utc_now(),
+                "pause": stage_summary.get("pause"),
+                "resume_run_id": source_plan.run_dir.name,
+            })
+            atomic_json(state_path, state)
+            return state
+        stage_payload = read_json(result_path)
+        stage_complete = (
+            payload_succeeded(stage_payload, expected_agent=stage_agent.name)
+            and payload_report_status(stage_payload) == "complete"
+        )
+        if (
+            stage_summary.get("failed", 0) != 0
+            or stage_summary.get("succeeded", 0) != 1
+            or not stage_complete
+        ):
+            state.update({
+                "status": "failed",
+                "updated_at": utc_now(),
+                "reason": f"Post-source stage {stage.name} did not produce a contract-valid result.",
+            })
+            atomic_json(state_path, state)
+            return state
+        prior_result_paths.append(result_path)
+
+    state.update({
+        "status": "complete",
+        "completed_at": utc_now(),
+        "updated_at": utc_now(),
+        "final_result_path": (
+            _workspace_path(root, prior_result_paths[-1]) if prior_result_paths else None
+        ),
+        "estimated_total_cost_usd": round(total_cost, 6),
+        "session_reset_count": total_resets,
+        "active_stage": None,
+        "active_stage_run_id": None,
+    })
+    atomic_json(state_path, state)
+    return state

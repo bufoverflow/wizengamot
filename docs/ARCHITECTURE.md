@@ -18,6 +18,17 @@ The Agent SDK runner creates one fresh `query()` session per selected agent. Wor
 
 Synthesis agents consume completed source reports after the independent pass. They preserve material dissent, reconcile evidence, and produce decision artifacts with source-report paths.
 
+Campaigns may encode this plane as an ordered post-source pipeline. The runtime admits the first
+stage only after the exact source roster is complete and mechanically qualified. Later stages receive
+the qualified source directory plus earlier stage result paths. Each stage is a separate resumable
+run with its own model, effort, turns, budget, retries, provenance feedback, and provider-limit state.
+The runtime also creates a deterministic structured corpus index and binds every stage to a hash of
+the qualified source payloads, preventing repaired or replaced reports from inheriting stale synthesis.
+
+This supports a Pareto-efficient model allocation: inexpensive models perform bounded parallel work,
+the most capable generally available model handles the scarce global synthesis, and an independent
+frontier model challenges the synthesis without being treated as a second source of evidence.
+
 ## Trust boundary
 
 Model output remains untrusted until deterministic checks confirm:

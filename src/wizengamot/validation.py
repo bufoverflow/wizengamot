@@ -10,6 +10,7 @@ from .workspace import load_workspace_config, resolve_workspace
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 TIERS = {"chief", "director", "specialist", "council", "synthesis"}
+EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 
 
 def parse_frontmatter(path: Path) -> dict[str, str]:
@@ -116,9 +117,37 @@ def validate(root: Path | None = None) -> list[str]:
     if campaign_dir.exists():
         for path in sorted(campaign_dir.glob("*.json")):
             try:
-                selected = select_campaign(load_campaign(path.stem, base), agents)
+                campaign = load_campaign(path.stem, base)
+                selected = select_campaign(campaign, agents)
                 if not selected:
                     errors.append(f"Campaign {path.stem} selects zero agents")
+                agent_names = {agent.name for agent in agents}
+                stage_names = [stage.name for stage in campaign.post_source_pipeline]
+                duplicate_stages = sorted(
+                    name for name, count in Counter(stage_names).items() if count > 1
+                )
+                if duplicate_stages:
+                    errors.append(
+                        f"Campaign {path.stem} has duplicate post-source stages: {duplicate_stages}"
+                    )
+                for stage in campaign.post_source_pipeline:
+                    prefix = f"Campaign {path.stem} post-source stage {stage.name!r}"
+                    if not NAME_RE.fullmatch(stage.name):
+                        errors.append(f"{prefix} has an invalid name")
+                    if stage.agent_name not in agent_names:
+                        errors.append(f"{prefix} references unknown agent {stage.agent_name!r}")
+                    if not stage.model.strip():
+                        errors.append(f"{prefix} requires a model")
+                    if stage.effort not in EFFORT_LEVELS:
+                        errors.append(f"{prefix} has invalid effort {stage.effort!r}")
+                    if stage.max_turns < 1:
+                        errors.append(f"{prefix} max_turns must be positive")
+                    if stage.budget_usd <= 0:
+                        errors.append(f"{prefix} budget_usd must be positive")
+                    if stage.retries < 0:
+                        errors.append(f"{prefix} retries cannot be negative")
+                    if not stage.task.strip():
+                        errors.append(f"{prefix} requires a task")
             except Exception as exc:
                 errors.append(f"Campaign {path.stem} is invalid: {exc}")
 
