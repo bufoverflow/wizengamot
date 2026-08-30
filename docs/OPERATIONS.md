@@ -34,7 +34,9 @@ Require `mechanically_qualified: true`, then perform semantic review for source 
 
 Reuse the same `--run-id` to resume. Valid successful reports are skipped. Failed, malformed, or report-contract-invalid reports receive a new attempt number. Contract violations are preserved on each attempt and supplied to the first new attempt after resume, as well as to later configured retries. Changing the task, campaign, or roster under an existing run ID is rejected.
 
-Claude session-limit, account-quota, and authentication failures are campaign-wide pauses. The runner stops admitting queued agents, drains already-active attempts, writes `pause.json` plus a partial progress and summary record, and exits nonzero with a `Run paused` message. Resolve the provider issue, then repeat the launch command with the same run ID. Do not manufacture runner-failure results for agents listed as deferred.
+Claude session-limit failures are automatically recoverable within the original launch. The runner stops admitting queued agents, drains already-active attempts, writes a durable `waiting-for-session-reset` checkpoint, sleeps until the advertised reset plus a grace interval, and resumes unfinished agents under the same run ID. If the reset hint cannot be parsed or the provider still reports exhaustion, the runner waits and probes again. Completed results are skipped even when the initial command used `--no-skip-existing`.
+
+Account-quota and authentication failures remain manual campaign-wide pauses. They write `pause.json` plus a partial progress and summary record, then exit nonzero with a `Run paused` message. Resolve the provider issue and repeat the launch command with the same run ID. Do not manufacture runner-failure results for agents listed as deferred.
 
 ## Large launches
 
@@ -55,6 +57,7 @@ Inspect:
 runs/<run-id>/progress.json
 runs/<run-id>/summary.json
 runs/<run-id>/pause.json
+runs/<run-id>/session-waits.json
 runs/<run-id>/results/
 runs/<run-id>/attempts/
 ```
