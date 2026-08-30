@@ -315,11 +315,18 @@ def record_session_wait(
         "reset_hint": failure.get("reset_hint"),
     }
     waits.append(record)
+    saved["session_reset_count"] = len(waits)
     atomic_json(waits_path, saved)
 
-    waiting_pause = {**failure, **record, "status": "waiting-for-session-reset"}
+    waiting_pause = {
+        **failure,
+        **record,
+        "status": "waiting-for-session-reset",
+        "session_reset_count": len(waits),
+    }
     summary.update({
         "status": "waiting-for-session-reset",
+        "session_reset_count": len(waits),
         "session_limit_wait_count": len(waits),
         "session_wait": record,
         "pause": waiting_pause,
@@ -330,6 +337,7 @@ def record_session_wait(
     progress.update({
         "status": "waiting-for-session-reset",
         "updated_at": started.isoformat(),
+        "session_reset_count": len(waits),
         "session_limit_wait_count": len(waits),
         "session_wait": record,
         "pause": waiting_pause,
@@ -908,14 +916,17 @@ async def launch_plan(
         if summary.get("status") != "paused" or failure.get("code") != "session-limit":
             saved_waits = read_json(plan.run_dir / "session-waits.json")
             waits = saved_waits.get("waits") if isinstance(saved_waits, dict) else None
+            reset_count = len(waits) if isinstance(waits, list) else 0
+            summary["session_reset_count"] = reset_count
+            progress = read_json(plan.run_dir / "progress.json") or {"run_id": plan.run_dir.name}
+            progress["session_reset_count"] = reset_count
             if isinstance(waits, list) and waits:
                 summary["session_limit_wait_count"] = len(waits)
                 summary["session_waits_path"] = str(plan.run_dir / "session-waits.json")
-                atomic_json(plan.run_dir / "summary.json", summary)
-                progress = read_json(plan.run_dir / "progress.json") or {"run_id": plan.run_dir.name}
                 progress["session_limit_wait_count"] = len(waits)
                 progress["session_waits_path"] = str(plan.run_dir / "session-waits.json")
-                atomic_json(plan.run_dir / "progress.json", progress)
+            atomic_json(plan.run_dir / "summary.json", summary)
+            atomic_json(plan.run_dir / "progress.json", progress)
             return summary
 
         wait_seconds = session_limit_wait_seconds(failure)

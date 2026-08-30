@@ -36,6 +36,8 @@ Reuse the same `--run-id` to resume. Valid successful reports are skipped. Faile
 
 Claude session-limit failures are automatically recoverable within the original launch. The runner stops admitting queued agents, drains already-active attempts, writes a durable `waiting-for-session-reset` checkpoint, sleeps until the advertised reset plus a grace interval, and resumes unfinished agents under the same run ID. If the reset hint cannot be parsed or the provider still reports exhaustion, the runner waits and probes again. Completed results are skipped even when the initial command used `--no-skip-existing`.
 
+The final launch result and `summary.json` always report `session_reset_count`; `progress.json`, `pause.json`, and `session-waits.json` expose the count during recovery.
+
 Account-quota and authentication failures remain manual campaign-wide pauses. They write `pause.json` plus a partial progress and summary record, then exit nonzero with a `Run paused` message. Resolve the provider issue and repeat the launch command with the same run ID. Do not manufacture runner-failure results for agents listed as deferred.
 
 ## Large launches

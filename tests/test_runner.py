@@ -323,6 +323,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(calls, [1, 2])
             self.assertEqual(first["succeeded"], 1)
             self.assertEqual(first["attempt_count"], 2)
+            self.assertEqual(first["session_reset_count"], 0)
             self.assertAlmostEqual(first["estimated_total_cost_usd"], 0.30)
             self.assertEqual(second["skipped_successful"], 1)
             self.assertEqual(len(json.loads((run_dir / "manifest.json").read_text())["launch_history"]), 2)
@@ -510,6 +511,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             waiting_progress, waiting_summary, waiting_pause = waiting_snapshots[0]
             for record in (waiting_progress, waiting_summary, waiting_pause):
                 self.assertEqual(record["status"], "waiting-for-session-reset")
+                self.assertEqual(record["session_reset_count"], 1)
             self.assertEqual(waiting_summary["completed_agents"], [completed_agent.name])
             self.assertEqual(waiting_summary["failed_agents"], [limited_agent.name])
             self.assertEqual(waiting_summary["deferred_agents"], [deferred_agent.name])
@@ -520,10 +522,12 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(summary["failed"], 0)
             self.assertEqual(summary["deferred"], 0)
             self.assertEqual(summary["attempt_count"], 4)
+            self.assertEqual(summary["session_reset_count"], 1)
             self.assertEqual(summary["session_limit_wait_count"], 1)
             self.assertEqual(summary["skipped_successful"], 1)
             self.assertEqual(json.loads((run_dir / "pause.json").read_text())["status"], "resumed")
             waits = json.loads((run_dir / "session-waits.json").read_text())
+            self.assertEqual(waits["session_reset_count"], 1)
             self.assertEqual(waits["waits"][0]["wait_seconds"], 42.0)
             self.assertEqual(len(json.loads((run_dir / "manifest.json").read_text())["launch_history"]), 1)
             self.assertTrue((run_dir / "results" / f"{deferred_agent.name}.json").is_file())
@@ -572,6 +576,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(calls, [1, 2, 3])
             self.assertEqual(waits, [7.0, 7.0])
             self.assertEqual(summary["status"], "complete")
+            self.assertEqual(summary["session_reset_count"], 2)
             self.assertEqual(summary["session_limit_wait_count"], 2)
             self.assertEqual(len(json.loads((run_dir / "session-waits.json").read_text())["waits"]), 2)
             self.assertEqual(len(json.loads((run_dir / "manifest.json").read_text())["launch_history"]), 1)
@@ -630,6 +635,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(summary["completed_agents"], [limited_agent.name])
             self.assertEqual(summary["failed_agents"], [failing_agent.name])
+            self.assertEqual(summary["session_reset_count"], 1)
             self.assertEqual(summary["session_limit_wait_count"], 1)
 
     async def test_global_account_quota_drains_an_already_active_worker(self):
