@@ -264,6 +264,7 @@ A run produces:
 ├── progress.json
 ├── summary.json
 ├── pause.json                 # present after a global provider pause
+├── session-waits.json         # present after automatic session-limit waits
 ├── results/
 │   └── <agent-name>.json
 └── attempts/
@@ -279,8 +280,10 @@ Behavior:
 - Failed, malformed, or report-contract-invalid reports remain saved and eligible for a later attempt.
 - Provenance violations are stored in `report_contract_errors`, prevent success, and are supplied to the next configured retry as repair feedback.
 - Saved provenance violations are restored on the first new attempt after resuming a contract-invalid result.
-- Claude session limits, exhausted account quota, and authentication failures pause the whole run without consuming runner retries. In-flight attempts drain and persist; queued agents remain deferred with no result file.
-- A paused run writes explicit completed, failed, and deferred agent lists to `progress.json`, `summary.json`, and `pause.json`, then resumes under the same run ID after the provider issue is resolved.
+- Claude session limits checkpoint the run without consuming runner retries. In-flight attempts drain and persist, queued agents remain deferred with no result file, and the original launch waits for the advertised reset before resuming unfinished work automatically.
+- Reset hints with relative durations, ISO timestamps, or local clock times are honored with a small grace window. Unparseable hints use a conservative polling interval; repeated session-limit responses re-enter the wait loop.
+- Session waits are recorded in `session-waits.json`, while `progress.json`, `summary.json`, and `pause.json` expose the current waiting state. The final CLI result and persisted summary always include `session_reset_count` (including zero). The manifest still records one user launch regardless of internal recovery passes.
+- Exhausted account quota and authentication failures remain manual pauses because they do not provide a reliable automatic recovery point.
 - Reusing a run ID with a different task, campaign, or roster is rejected.
 - Run IDs reject path traversal.
 - Retries default to zero.

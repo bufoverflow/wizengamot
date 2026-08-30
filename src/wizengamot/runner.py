@@ -4,13 +4,15 @@ import asyncio
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .live import LiveTail, describe_sdk_message
 from .models import AgentRecord, LaunchPlan
@@ -57,6 +59,24 @@ RESET_HINT_RE = re.compile(
     r"\b(?:limit\s+)?resets?\b[^.\n]*|\btry again (?:at|after|in|on)\b[^.\n]*",
     re.IGNORECASE,
 )
+RELATIVE_RESET_RE = re.compile(
+    r"\b(?:resets?|retry|try again)\b[^.\n]*?\b(?:in|after)\s+"
+    r"(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b",
+    re.IGNORECASE,
+)
+ISO_RESET_RE = re.compile(
+    r"\b(20\d{2}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)\b",
+    re.IGNORECASE,
+)
+CLOCK_RESET_RE = re.compile(
+    r"\b(?:resets?|reset|try again)\b[^.\n]*?\b(?:at\s+)?"
+    r"(\d{1,2})(?::(\d{2}))?\s*([ap]m)\b"
+    r"(?:\s*\(([^)]+)\))?",
+    re.IGNORECASE,
+)
+SESSION_RESET_FALLBACK_SECONDS = 300.0
+SESSION_RESET_GRACE_SECONDS = 5.0
+SESSION_RESET_MAX_SLEEP_SECONDS = 21600.0
 
 
 @dataclass(frozen=True)
@@ -181,6 +201,154 @@ def classify_global_provider_failure(payload: dict[str, Any] | None) -> dict[str
         "error": matched_error,
         "reset_hint": reset_hint,
     }
+
+
+def session_limit_reset_at(
+    failure: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Resolve a provider reset hint to an aware timestamp when possible."""
+
+    current = now or datetime.now().astimezone()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    text = " ".join(
+        value for value in (failure.get("error"), failure.get("reset_hint"))
+        if isinstance(value, str) and value.strip()
+    )
+
+    relative = RELATIVE_RESET_RE.search(text)
+    if relative is not None:
+        amount = float(relative.group(1))
+        unit = relative.group(2).lower()
+        if unit.startswith(("hour", "hr")):
+            seconds = amount * 3600
+        elif unit.startswith(("minute", "min")):
+            seconds = amount * 60
+        else:
+            seconds = amount
+        return current + timedelta(seconds=min(seconds, SESSION_RESET_MAX_SLEEP_SECONDS))
+
+    absolute = ISO_RESET_RE.search(text)
+    if absolute is not None:
+        raw = absolute.group(1).replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=current.tzinfo)
+
+    clock = CLOCK_RESET_RE.search(text)
+    if clock is None:
+        return None
+    raw_hour = int(clock.group(1))
+    minute = int(clock.group(2) or 0)
+    if not 1 <= raw_hour <= 12 or not 0 <= minute <= 59:
+        return None
+    hour = raw_hour % 12
+    if clock.group(3).lower() == "pm":
+        hour += 12
+    timezone_name = clock.group(4)
+    target_timezone = current.astimezone().tzinfo or timezone.utc
+    if timezone_name:
+        try:
+            target_timezone = ZoneInfo(timezone_name.strip())
+        except (ValueError, ZoneInfoNotFoundError):
+            pass
+    local_now = current.astimezone(target_timezone)
+    candidate = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= local_now:
+        if local_now - candidate <= timedelta(minutes=5):
+            candidate = local_now
+        else:
+            candidate += timedelta(days=1)
+    return candidate
+
+
+def session_limit_wait_seconds(
+    failure: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> float:
+    current = now or datetime.now().astimezone()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    reset_at = session_limit_reset_at(failure, now=current)
+    if reset_at is None:
+        return SESSION_RESET_FALLBACK_SECONDS
+    delay = (reset_at.astimezone(timezone.utc) - current.astimezone(timezone.utc)).total_seconds()
+    return min(
+        SESSION_RESET_MAX_SLEEP_SECONDS,
+        max(SESSION_RESET_GRACE_SECONDS, delay + SESSION_RESET_GRACE_SECONDS),
+    )
+
+
+async def wait_for_session_reset(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+def record_session_wait(
+    run_dir: Path,
+    summary: dict[str, Any],
+    failure: dict[str, Any],
+    wait_seconds: float,
+) -> dict[str, Any]:
+    """Persist a durable checkpoint before yielding to the provider reset window."""
+
+    waits_path = run_dir / "session-waits.json"
+    saved = read_json(waits_path) or {"run_id": run_dir.name, "waits": []}
+    waits = saved.get("waits")
+    if not isinstance(waits, list):
+        waits = []
+        saved["waits"] = waits
+    started = datetime.now(timezone.utc)
+    record = {
+        "wait_number": len(waits) + 1,
+        "started_at": started.isoformat(),
+        "resume_at": (started + timedelta(seconds=wait_seconds)).isoformat(),
+        "wait_seconds": round(wait_seconds, 3),
+        "agent_name": failure.get("agent_name"),
+        "attempt": failure.get("attempt"),
+        "error": failure.get("error"),
+        "reset_hint": failure.get("reset_hint"),
+    }
+    waits.append(record)
+    saved["session_reset_count"] = len(waits)
+    atomic_json(waits_path, saved)
+
+    waiting_pause = {
+        **failure,
+        **record,
+        "status": "waiting-for-session-reset",
+        "session_reset_count": len(waits),
+    }
+    summary.update({
+        "status": "waiting-for-session-reset",
+        "session_reset_count": len(waits),
+        "session_limit_wait_count": len(waits),
+        "session_wait": record,
+        "pause": waiting_pause,
+    })
+    atomic_json(run_dir / "summary.json", summary)
+
+    progress = read_json(run_dir / "progress.json") or {"run_id": run_dir.name}
+    progress.update({
+        "status": "waiting-for-session-reset",
+        "updated_at": started.isoformat(),
+        "session_reset_count": len(waits),
+        "session_limit_wait_count": len(waits),
+        "session_wait": record,
+        "pause": waiting_pause,
+    })
+    atomic_json(run_dir / "progress.json", progress)
+
+    pause = read_json(run_dir / "pause.json") or {"run_id": run_dir.name}
+    pause.update(waiting_pause)
+    pause["resume_run_id"] = run_dir.name
+    atomic_json(run_dir / "pause.json", pause)
+    return record
 
 
 def _result_payload(message: Any) -> dict[str, Any]:
@@ -444,7 +612,7 @@ async def execute_agent(
     return payload
 
 
-async def launch_plan(
+async def _launch_plan_pass(
     *,
     root: Path,
     plan: LaunchPlan,
@@ -452,18 +620,22 @@ async def launch_plan(
     campaign_prompt: str | None,
     skip_existing: bool = True,
     emit_progress: bool = False,
+    record_launch: bool,
+    eligible_agent_names: set[str] | None,
+    remaining_attempts: dict[str, int],
 ) -> dict[str, Any]:
     plan.run_dir.mkdir(parents=True, exist_ok=True)
     results_dir = plan.run_dir / "results"
     attempts_root = plan.run_dir / "attempts"
     results_dir.mkdir(parents=True, exist_ok=True)
     attempts_root.mkdir(parents=True, exist_ok=True)
-    prepare_manifest(
-        path=plan.run_dir / "manifest.json",
-        plan=plan,
-        campaign_name=campaign_name,
-        campaign_prompt=campaign_prompt,
-    )
+    if record_launch:
+        prepare_manifest(
+            path=plan.run_dir / "manifest.json",
+            plan=plan,
+            campaign_name=campaign_name,
+            campaign_prompt=campaign_prompt,
+        )
 
     progress_path = plan.run_dir / "progress.json"
     pause_path = plan.run_dir / "pause.json"
@@ -553,10 +725,16 @@ async def launch_plan(
         if skip_existing and payload_succeeded(existing, expected_agent=agent.name):
             await record_progress(agent, existing, True)
             return WorkerOutcome(agent=agent, payload=existing, state="completed", was_skipped=True)
+        if eligible_agent_names is not None and agent.name not in eligible_agent_names:
+            if existing is None:
+                return WorkerOutcome(agent=agent, payload=None, state="deferred")
+            await record_progress(agent, existing, False)
+            return WorkerOutcome(agent=agent, payload=existing, state="failed")
 
         agent_attempts_dir = attempts_root / agent.name
         first_attempt = next_attempt_number(agent_attempts_dir)
         last: dict[str, Any] | None = None
+        last_was_global = False
         saved_contract_errors = payload_contract_errors(existing) if isinstance(existing, dict) else []
         prior_report_contract_errors: list[str] | None = saved_contract_errors or None
 
@@ -567,7 +745,8 @@ async def launch_plan(
             if pause_event.is_set():
                 return WorkerOutcome(agent=agent, payload=None, state="deferred")
             live.start_agent(agent.name, f"{agent.model} · attempt {first_attempt}")
-            for attempt in range(first_attempt, first_attempt + plan.retries + 1):
+            available_attempts = remaining_attempts.get(agent.name, 0)
+            for attempt in range(first_attempt, first_attempt + available_attempts):
                 if pause_event.is_set():
                     break
                 attempt_path = agent_attempts_dir / f"attempt-{attempt}.json"
@@ -589,8 +768,10 @@ async def launch_plan(
                 atomic_json(final_path, last)
                 global_failure = classify_global_provider_failure(last)
                 if global_failure is not None:
+                    last_was_global = True
                     await trip_global_failure(agent, last, global_failure)
                     break
+                remaining_attempts[agent.name] = max(0, remaining_attempts[agent.name] - 1)
                 if payload_succeeded(last, expected_agent=agent.name):
                     break
                 prior_report_contract_errors = contract_errors or None
@@ -600,7 +781,12 @@ async def launch_plan(
         if last is None:
             return WorkerOutcome(agent=agent, payload=None, state="deferred")
         await record_progress(agent, last, False)
-        state = "completed" if payload_succeeded(last, expected_agent=agent.name) else "failed"
+        if payload_succeeded(last, expected_agent=agent.name):
+            state = "completed"
+        elif pause_event.is_set() and not last_was_global and remaining_attempts[agent.name] > 0:
+            state = "deferred"
+        else:
+            state = "failed"
         return WorkerOutcome(agent=agent, payload=last, state=state)
 
     try:
@@ -682,8 +868,84 @@ async def launch_plan(
             "deferred_agents": deferred_agents,
             "summary_path": str(plan.run_dir / "summary.json"),
         })
-    elif previous_pause is not None and previous_pause.get("status") == "paused":
+    elif previous_pause is not None and previous_pause.get("status") in {
+        "paused",
+        "waiting-for-session-reset",
+    }:
         previous_pause["status"] = "resumed"
         previous_pause["resumed_at"] = finalized_at
         atomic_json(pause_path, previous_pause)
     return summary
+
+
+async def launch_plan(
+    *,
+    root: Path,
+    plan: LaunchPlan,
+    campaign_name: str | None,
+    campaign_prompt: str | None,
+    skip_existing: bool = True,
+    emit_progress: bool = False,
+) -> dict[str, Any]:
+    """Run a plan once from the user's perspective, across session reset windows."""
+
+    first_pass = True
+    eligible_agent_names: set[str] | None = None
+    remaining_attempts = {
+        agent.name: plan.retries + 1
+        for agent in plan.agents
+    }
+    while True:
+        summary = await _launch_plan_pass(
+            root=root,
+            plan=plan,
+            campaign_name=campaign_name,
+            campaign_prompt=campaign_prompt,
+            # Internal recovery passes must preserve every successful result,
+            # including when the original user launch disabled resume skipping.
+            skip_existing=skip_existing if first_pass else True,
+            emit_progress=emit_progress,
+            record_launch=first_pass,
+            eligible_agent_names=eligible_agent_names,
+            remaining_attempts=remaining_attempts,
+        )
+        first_pass = False
+
+        pause = summary.get("pause")
+        failure = pause if isinstance(pause, dict) else {}
+        if summary.get("status") != "paused" or failure.get("code") != "session-limit":
+            saved_waits = read_json(plan.run_dir / "session-waits.json")
+            waits = saved_waits.get("waits") if isinstance(saved_waits, dict) else None
+            reset_count = len(waits) if isinstance(waits, list) else 0
+            summary["session_reset_count"] = reset_count
+            progress = read_json(plan.run_dir / "progress.json") or {"run_id": plan.run_dir.name}
+            progress["session_reset_count"] = reset_count
+            if isinstance(waits, list) and waits:
+                summary["session_limit_wait_count"] = len(waits)
+                summary["session_waits_path"] = str(plan.run_dir / "session-waits.json")
+                progress["session_limit_wait_count"] = len(waits)
+                progress["session_waits_path"] = str(plan.run_dir / "session-waits.json")
+            atomic_json(plan.run_dir / "summary.json", summary)
+            atomic_json(plan.run_dir / "progress.json", progress)
+            return summary
+
+        wait_seconds = session_limit_wait_seconds(failure)
+        wait_record = record_session_wait(plan.run_dir, summary, failure, wait_seconds)
+        eligible_agent_names = set(summary.get("deferred_agents", []))
+        source_agent = failure.get("agent_name")
+        if isinstance(source_agent, str):
+            eligible_agent_names.add(source_agent)
+        if emit_progress:
+            print(
+                "Claude session limit reached; run checkpointed. "
+                f"Waiting until {wait_record['resume_at']} before resuming automatically.",
+                file=sys.stderr,
+                flush=True,
+            )
+        await wait_for_session_reset(wait_seconds)
+        if emit_progress:
+            print(
+                f"Claude reset wait complete; resuming run {plan.run_dir.name}.",
+                file=sys.stderr,
+                flush=True,
+            )

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,6 +24,7 @@ from wizengamot.runner import (
     classify_global_provider_failure,
     execute_agent,
     launch_plan,
+    session_limit_wait_seconds,
 )
 
 
@@ -160,6 +162,35 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             "session-limit",
         )
 
+    def test_session_limit_wait_uses_relative_clock_and_fallback_hints(self):
+        now = datetime(2026, 8, 29, 19, 0, tzinfo=timezone.utc)
+        relative = {
+            "error": "You've hit your limit; try again in 90 minutes.",
+            "reset_hint": "try again in 90 minutes",
+        }
+        clock = {
+            "error": "You've hit your limit; resets at 3 PM (America/Los_Angeles).",
+            "reset_hint": "resets at 3 PM (America/Los_Angeles)",
+        }
+        unknown = {
+            "error": "Session limit reached.",
+            "reset_hint": "Resume after the Claude session limit resets.",
+        }
+        distant = {
+            "error": "You've hit your limit; try again in 999 hours.",
+            "reset_hint": "try again in 999 hours",
+        }
+        malformed_clock = {
+            "error": "You've hit your limit; resets at 99:99 PM.",
+            "reset_hint": "resets at 99:99 PM",
+        }
+
+        self.assertEqual(session_limit_wait_seconds(relative, now=now), 5405.0)
+        self.assertEqual(session_limit_wait_seconds(clock, now=now), 10805.0)
+        self.assertEqual(session_limit_wait_seconds(unknown, now=now), 300.0)
+        self.assertEqual(session_limit_wait_seconds(distant, now=now), 21600.0)
+        self.assertEqual(session_limit_wait_seconds(malformed_clock, now=now), 300.0)
+
     async def test_execute_agent_constructs_bounded_ephemeral_options(self):
         agent = next(
             a for a in load_agents(WORKSPACE)
@@ -292,6 +323,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(calls, [1, 2])
             self.assertEqual(first["succeeded"], 1)
             self.assertEqual(first["attempt_count"], 2)
+            self.assertEqual(first["session_reset_count"], 0)
             self.assertAlmostEqual(first["estimated_total_cost_usd"], 0.30)
             self.assertEqual(second["skipped_successful"], 1)
             self.assertEqual(len(json.loads((run_dir / "manifest.json").read_text())["launch_history"]), 2)
@@ -415,7 +447,198 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(json.loads((run_dir / "pause.json").read_text())["status"], "resumed")
             self.assertEqual(len(json.loads((run_dir / "manifest.json").read_text())["launch_history"]), 2)
 
-    async def test_global_limit_drains_an_already_active_worker(self):
+    async def test_session_limit_waits_and_resumes_without_a_second_launch(self):
+        agents_by_name = {agent.name: agent for agent in load_agents(WORKSPACE)}
+        completed_agent = agents_by_name["atlas-research-quality-falsification-agent"]
+        limited_agent = agents_by_name["atlas-research-quality-verifier-auditor"]
+        deferred_agent = agents_by_name["atlas-council-adversarial-review"]
+        calls: list[tuple[str, int]] = []
+        waiting_snapshots: list[tuple[dict, dict, dict]] = []
+
+        async def fake_execute_agent(**kwargs):
+            agent = kwargs["agent"]
+            attempt = kwargs["attempt"]
+            calls.append((agent.name, attempt))
+            if agent.name == limited_agent.name and attempt == 1:
+                payload = global_error_payload(
+                    agent,
+                    attempt,
+                    "You've hit your Claude usage limit. Your limit resets at 3 PM.",
+                )
+            else:
+                payload = fake_payload(agent, attempt, success=True, cost=0.10)
+            atomic_json(kwargs["output_path"], payload)
+            return payload
+
+        async def fake_wait(_seconds):
+            waiting_snapshots.append((
+                json.loads((run_dir / "progress.json").read_text()),
+                json.loads((run_dir / "summary.json").read_text()),
+                json.loads((run_dir / "pause.json").read_text()),
+            ))
+
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "automatic-session-resume-run"
+            plan = LaunchPlan(
+                agents=(completed_agent, limited_agent, deferred_agent),
+                task="Synthetic automatic session resume test", concurrency=1,
+                per_agent_budget_usd=0.50, retries=2, aggregate_ceiling_usd=4.5,
+                run_dir=run_dir,
+            )
+            with (
+                patch("wizengamot.runner.execute_agent", side_effect=fake_execute_agent),
+                patch("wizengamot.runner.session_limit_wait_seconds", return_value=42.0),
+                patch("wizengamot.runner.wait_for_session_reset", new=fake_wait),
+            ):
+                summary = await launch_plan(
+                    root=WORKSPACE,
+                    plan=plan,
+                    campaign_name=None,
+                    campaign_prompt=None,
+                    skip_existing=False,
+                )
+
+            self.assertEqual(
+                calls,
+                [
+                    (completed_agent.name, 1),
+                    (limited_agent.name, 1),
+                    (limited_agent.name, 2),
+                    (deferred_agent.name, 1),
+                ],
+            )
+            self.assertEqual(len(waiting_snapshots), 1)
+            waiting_progress, waiting_summary, waiting_pause = waiting_snapshots[0]
+            for record in (waiting_progress, waiting_summary, waiting_pause):
+                self.assertEqual(record["status"], "waiting-for-session-reset")
+                self.assertEqual(record["session_reset_count"], 1)
+            self.assertEqual(waiting_summary["completed_agents"], [completed_agent.name])
+            self.assertEqual(waiting_summary["failed_agents"], [limited_agent.name])
+            self.assertEqual(waiting_summary["deferred_agents"], [deferred_agent.name])
+            self.assertEqual(waiting_pause["wait_seconds"], 42.0)
+
+            self.assertEqual(summary["status"], "complete")
+            self.assertEqual(summary["succeeded"], 3)
+            self.assertEqual(summary["failed"], 0)
+            self.assertEqual(summary["deferred"], 0)
+            self.assertEqual(summary["attempt_count"], 4)
+            self.assertEqual(summary["session_reset_count"], 1)
+            self.assertEqual(summary["session_limit_wait_count"], 1)
+            self.assertEqual(summary["skipped_successful"], 1)
+            self.assertEqual(json.loads((run_dir / "pause.json").read_text())["status"], "resumed")
+            waits = json.loads((run_dir / "session-waits.json").read_text())
+            self.assertEqual(waits["session_reset_count"], 1)
+            self.assertEqual(waits["waits"][0]["wait_seconds"], 42.0)
+            self.assertEqual(len(json.loads((run_dir / "manifest.json").read_text())["launch_history"]), 1)
+            self.assertTrue((run_dir / "results" / f"{deferred_agent.name}.json").is_file())
+
+    async def test_repeated_session_limits_reenter_wait_until_success(self):
+        agent = next(
+            agent for agent in load_agents(WORKSPACE)
+            if agent.name == "atlas-research-quality-verifier-auditor"
+        )
+        calls: list[int] = []
+        waits: list[float] = []
+
+        async def fake_execute_agent(**kwargs):
+            attempt = kwargs["attempt"]
+            calls.append(attempt)
+            if attempt < 3:
+                payload = global_error_payload(
+                    agent,
+                    attempt,
+                    "You've hit your Claude usage limit; resets in 1 minute.",
+                )
+            else:
+                payload = fake_payload(agent, attempt, success=True, cost=0.10)
+            atomic_json(kwargs["output_path"], payload)
+            return payload
+
+        async def fake_wait(seconds):
+            waits.append(seconds)
+
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "repeated-session-wait-run"
+            plan = LaunchPlan(
+                agents=(agent,), task="Synthetic repeated session wait test", concurrency=1,
+                per_agent_budget_usd=0.50, retries=0, aggregate_ceiling_usd=0.50,
+                run_dir=run_dir,
+            )
+            with (
+                patch("wizengamot.runner.execute_agent", side_effect=fake_execute_agent),
+                patch("wizengamot.runner.session_limit_wait_seconds", return_value=7.0),
+                patch("wizengamot.runner.wait_for_session_reset", new=fake_wait),
+            ):
+                summary = await launch_plan(
+                    root=WORKSPACE, plan=plan, campaign_name=None, campaign_prompt=None,
+                )
+
+            self.assertEqual(calls, [1, 2, 3])
+            self.assertEqual(waits, [7.0, 7.0])
+            self.assertEqual(summary["status"], "complete")
+            self.assertEqual(summary["session_reset_count"], 2)
+            self.assertEqual(summary["session_limit_wait_count"], 2)
+            self.assertEqual(len(json.loads((run_dir / "session-waits.json").read_text())["waits"]), 2)
+            self.assertEqual(len(json.loads((run_dir / "manifest.json").read_text())["launch_history"]), 1)
+
+    async def test_session_recovery_does_not_replenish_ordinary_retry_budget(self):
+        agents_by_name = {agent.name: agent for agent in load_agents(WORKSPACE)}
+        failing_agent = agents_by_name["atlas-research-quality-falsification-agent"]
+        limited_agent = agents_by_name["atlas-research-quality-verifier-auditor"]
+        calls: list[tuple[str, int]] = []
+
+        async def fake_execute_agent(**kwargs):
+            agent = kwargs["agent"]
+            attempt = kwargs["attempt"]
+            calls.append((agent.name, attempt))
+            if agent.name == failing_agent.name:
+                payload = fake_payload(agent, attempt, success=False, cost=0.10)
+            elif attempt == 1:
+                payload = global_error_payload(
+                    agent,
+                    attempt,
+                    "You've hit your Claude usage limit; resets in 1 minute.",
+                )
+            else:
+                payload = fake_payload(agent, attempt, success=True, cost=0.10)
+            atomic_json(kwargs["output_path"], payload)
+            return payload
+
+        async def fake_wait(_seconds):
+            return None
+
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "preserved-retry-budget-run"
+            plan = LaunchPlan(
+                agents=(failing_agent, limited_agent),
+                task="Synthetic preserved retry budget test", concurrency=1,
+                per_agent_budget_usd=0.50, retries=1, aggregate_ceiling_usd=2.0,
+                run_dir=run_dir,
+            )
+            with (
+                patch("wizengamot.runner.execute_agent", side_effect=fake_execute_agent),
+                patch("wizengamot.runner.session_limit_wait_seconds", return_value=7.0),
+                patch("wizengamot.runner.wait_for_session_reset", new=fake_wait),
+            ):
+                summary = await launch_plan(
+                    root=WORKSPACE, plan=plan, campaign_name=None, campaign_prompt=None,
+                )
+
+            self.assertEqual(
+                calls,
+                [
+                    (failing_agent.name, 1),
+                    (failing_agent.name, 2),
+                    (limited_agent.name, 1),
+                    (limited_agent.name, 2),
+                ],
+            )
+            self.assertEqual(summary["completed_agents"], [limited_agent.name])
+            self.assertEqual(summary["failed_agents"], [failing_agent.name])
+            self.assertEqual(summary["session_reset_count"], 1)
+            self.assertEqual(summary["session_limit_wait_count"], 1)
+
+    async def test_global_account_quota_drains_an_already_active_worker(self):
         agents_by_name = {agent.name: agent for agent in load_agents(WORKSPACE)}
         limited_agent = agents_by_name["atlas-research-quality-verifier-auditor"]
         draining_agent = agents_by_name["atlas-research-quality-falsification-agent"]
@@ -431,7 +654,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                 payload = global_error_payload(
                     agent,
                     kwargs["attempt"],
-                    "You've hit your Claude usage limit. Your limit resets at 3 PM.",
+                    "Your organization quota has been exhausted.",
                 )
             else:
                 active_started.set()
