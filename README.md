@@ -277,6 +277,9 @@ A run produces:
 ├── session-waits.json         # present after automatic session-limit waits
 ├── post-source-pipeline.json  # configured stage definitions and current workflow state
 ├── source-corpus-index.json   # deterministic structured index with full-report pointers
+├── recovery-overrides.json    # optional private, run-local model/turn recovery settings
+├── report-contract-repair-summary.json  # present after an applied deterministic repair
+├── report-contract-backups/   # timestamped originals from applied repairs
 ├── results/
 │   └── <agent-name>.json
 └── attempts/
@@ -312,6 +315,44 @@ wizengamot --workspace workspace check-run-contract \
 ```
 
 The command is read-only and exits nonzero when a selected result is missing, unsuccessful, malformed, or provenance-invalid. A mechanical pass does not replace semantic or human review.
+
+For an existing run, plan deterministic repairs without changing any file:
+
+```bash
+wizengamot --workspace workspace repair-run-contract \
+  --run-id <run-id>
+```
+
+Add `--apply` only after reviewing the plan. The normalizer considers final `contract-error`
+results only. It can canonicalize direct citation locators, derive stable external IDs, merge exact
+direct-URL/DOI duplicates, copy already-cited source IDs into missing reviewed-source accounting,
+and conservatively downgrade unsupported novelty or evidence classifications. It never invents
+evidence or edits `attempt-*.json`. An applied report is backed up and replaced only when its
+recomputed error set is strictly smaller and introduces no new error category. Each field change is
+recorded in `report_contract_repairs`, and the run-level summary preserves unresolved patterns.
+
+Applied repairs invalidate cached source-corpus qualification and hashes. The post-source pipeline
+therefore fingerprints the final repaired corpus rather than reusing stale synthesis inputs.
+
+Targeted recovery tuning belongs in the ignored run directory, not the canonical agent registry:
+
+```json
+{
+  "version": 1,
+  "run_id": "audit-001",
+  "overrides": {
+    "example-writer-translator": {
+      "model": "sonnet",
+      "max_turns": 28,
+      "reason": "failed writer recovery"
+    }
+  }
+}
+```
+
+Save this as `runs/<run-id>/recovery-overrides.json`. Overrides are validated at launch and apply
+only when that agent already has an unsuccessful final result. Qualified results are skipped
+unchanged, and the summary records every override actually used.
 
 ## Source analysis and synthesis
 

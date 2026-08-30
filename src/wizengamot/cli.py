@@ -12,6 +12,7 @@ from pathlib import Path
 from .activation import activate, clear_activated
 from .governance import analysis_guard_blocked, note_analysis_run, record_external_action
 from .models import LaunchPlan
+from .report_repair import repair_run_contract
 from .registry import load_agents, load_campaign, select_agents, select_campaign
 from .runner import (
     DENIED_TOOLS,
@@ -137,6 +138,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_check_run.add_argument("--run-id", required=True)
     p_check_run.add_argument("--name", action="append", default=[])
+
+    p_repair_run = sub.add_parser(
+        "repair-run-contract",
+        help="Plan or apply deterministic provenance repairs to contract-error final results",
+    )
+    p_repair_run.add_argument("--run-id", required=True)
+    p_repair_run.add_argument(
+        "--apply",
+        action="store_true",
+        help="Back up and replace only reports whose contract error set strictly improves",
+    )
 
     p_record = sub.add_parser(
         "record-action",
@@ -273,6 +285,25 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(json.dumps(result, indent=2))
         return 0 if result["mechanically_qualified"] else 1
+
+    if args.command == "repair-run-contract":
+        if not RUN_ID_RE.fullmatch(args.run_id):
+            print(
+                "Run ID must start with an alphanumeric character and contain only letters, numbers, "
+                "dots, underscores, and hyphens.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            result = repair_run_contract(
+                root / "runs" / args.run_id,
+                apply=args.apply,
+            )
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2))
+        return 0
 
     if args.command == "sdk-check":
         try:
