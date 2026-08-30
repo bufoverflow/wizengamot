@@ -148,6 +148,57 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("Invalid result agent name", stderr.getvalue())
 
+    def test_repair_run_contract_defaults_to_read_only_dry_run(self):
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td) / "atlas"
+            shutil.copytree(WORKSPACE, workspace)
+            result_path = workspace / "runs/repair-cli/results/example-agent.json"
+            result_path.parent.mkdir(parents=True)
+            value = {
+                "agent": {"name": "example-agent"},
+                "result": {
+                    "is_error": False,
+                    "report": {
+                        "agent_name": "example-agent",
+                        "status": "complete",
+                        "findings": [{
+                            "statement": "Example",
+                            "classification": "inference",
+                            "evidence_class": "external-secondary",
+                            "novelty": "corroborated",
+                            "claim_type": "positive",
+                            "source_ids": ["ext-example-guide"],
+                            "reviewed_source_ids": [],
+                        }],
+                        "citations": [{
+                            "source_id": "ext-example-guide",
+                            "source_class": "external-secondary",
+                            "publisher": "Example",
+                            "source": "Guide",
+                            "locator": "https://example.com/guide",
+                            "primary": False,
+                            "claims_supported": ["Example"],
+                        }],
+                    },
+                },
+            }
+            encoded = json.dumps(value, indent=2)
+            result_path.write_text(encoded)
+            stdout = io.StringIO()
+
+            with contextlib.redirect_stdout(stdout):
+                code = main([
+                    "--workspace", str(workspace),
+                    "repair-run-contract", "--run-id", "repair-cli",
+                ])
+
+            self.assertEqual(code, 0)
+            self.assertEqual(result_path.read_text(), encoded)
+            self.assertEqual(json.loads(stdout.getvalue())["mode"], "dry-run")
+            self.assertFalse(
+                (workspace / "runs/repair-cli/report-contract-repair-summary.json").exists()
+            )
+
     def test_launch_defaults_to_dry_run(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

@@ -50,6 +50,15 @@ The runtime gate mechanically requires descriptive external source IDs, complete
 
 Use `wizengamot --workspace <workspace> check-run-contract --run-id <run-id>` to recompute the current mechanical contract against saved results before treating a calibration as qualified. The command is read-only and exits nonzero when any selected result is missing, malformed, unsuccessful, or contract-invalid. It does not replace semantic or human review.
 
+`repair-run-contract --run-id <run-id>` is a separate deterministic normalization step. It defaults
+to dry-run and can only transform evidence already represented in a final `contract-error` payload:
+canonical direct locators, stable external identifiers, exact direct-locator deduplication,
+reviewed-source bookkeeping, and conservative classification downgrades. Applied repairs preserve
+the original result in a timestamped backup, append field-level audit records, recompute the runtime
+contract, and persist only a strict improvement with no new error category. Attempts remain
+immutable, placeholder locators remain invalid, and semantic overreach still requires model or human
+review.
+
 ## Novelty accounting
 
 Each material finding should classify its relationship to the supplied corpus:

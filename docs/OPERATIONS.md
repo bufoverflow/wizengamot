@@ -66,6 +66,20 @@ On a TTY, the runner replaces the live activity view with a colored session-rese
 
 Account-quota and authentication failures remain manual campaign-wide pauses. They write `pause.json` plus a partial progress and summary record, then exit nonzero with a `Run paused` message. Resolve the provider issue and repeat the launch command with the same run ID. Do not manufacture runner-failure results for agents listed as deferred.
 
+Use `repair-run-contract --run-id <run-id>` to preview deterministic normalization of final
+`contract-error` results. The default is strictly read-only. With `--apply`, each accepted result is
+first copied into a timestamped `report-contract-backups/` directory, every changed field is audited
+in `report_contract_repairs`, and `report-contract-repair-summary.json` records the run-level result.
+The command never changes attempt records and rejects a candidate unless it strictly reduces the
+error set without adding a new error category. Applied changes invalidate cached corpus hashes and
+qualification so post-source synthesis must fingerprint the repaired final results.
+
+Put exceptional recovery model or turn settings in
+`runs/<run-id>/recovery-overrides.json`. The versioned file may set only `model`, `max_turns`, and a
+reason per agent. Overrides apply only to agents with an existing unsuccessful final result; valid
+reports remain untouched. The run summary records configured and applied overrides. Keep this file
+inside the private run directory rather than modifying the public registry.
+
 ## Large launches
 
 Campaigns selecting at least one hundred agents require:
@@ -88,6 +102,9 @@ runs/<run-id>/pause.json
 runs/<run-id>/session-waits.json
 runs/<run-id>/post-source-pipeline.json
 runs/<run-id>/source-corpus-index.json
+runs/<run-id>/recovery-overrides.json
+runs/<run-id>/report-contract-repair-summary.json
+runs/<run-id>/report-contract-backups/
 runs/<run-id>/results/
 runs/<run-id>/attempts/
 runs/<run-id>--post-<position>-<stage>/

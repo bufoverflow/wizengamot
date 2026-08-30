@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .live import LiveTail, SessionWaitDisplay, describe_sdk_message, style_status_line
 from .models import AgentRecord, LaunchPlan, PostSourceStage
 from .prompts import build_system_prompt, build_task_prompt, load_output_schema
+from .recovery import apply_recovery_override, load_recovery_overrides
 from .report_contract import annotate_report_contract, payload_contract_errors
 
 READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "WebSearch", "WebFetch"]
@@ -628,6 +629,8 @@ async def _launch_plan_pass(
     plan.run_dir.mkdir(parents=True, exist_ok=True)
     results_dir = plan.run_dir / "results"
     attempts_root = plan.run_dir / "attempts"
+    recovery_overrides = load_recovery_overrides(plan.run_dir)
+    applied_recovery_overrides: dict[str, dict[str, Any]] = {}
     results_dir.mkdir(parents=True, exist_ok=True)
     attempts_root.mkdir(parents=True, exist_ok=True)
     if record_launch:
@@ -724,7 +727,8 @@ async def _launch_plan_pass(
     async def worker(agent: AgentRecord) -> WorkerOutcome:
         final_path = results_dir / f"{agent.name}.json"
         existing = read_json(final_path)
-        if skip_existing and payload_succeeded(existing, expected_agent=agent.name):
+        existing_succeeded = payload_succeeded(existing, expected_agent=agent.name)
+        if existing_succeeded and (skip_existing or agent.name in recovery_overrides):
             await record_progress(agent, existing, True)
             return WorkerOutcome(agent=agent, payload=existing, state="completed", was_skipped=True)
         if eligible_agent_names is not None and agent.name not in eligible_agent_names:
@@ -732,6 +736,22 @@ async def _launch_plan_pass(
                 return WorkerOutcome(agent=agent, payload=None, state="deferred")
             await record_progress(agent, existing, False)
             return WorkerOutcome(agent=agent, payload=existing, state="failed")
+
+        effective_agent = (
+            apply_recovery_override(agent, recovery_overrides)
+            if existing is not None and not existing_succeeded
+            else agent
+        )
+        if effective_agent != agent:
+            override = recovery_overrides[agent.name]
+            applied_recovery_overrides[agent.name] = {
+                "agent_name": agent.name,
+                "original_model": agent.model,
+                "model": effective_agent.model,
+                "original_max_turns": agent.max_turns,
+                "max_turns": effective_agent.max_turns,
+                "reason": override.get("reason"),
+            }
 
         agent_attempts_dir = attempts_root / agent.name
         first_attempt = next_attempt_number(agent_attempts_dir)
@@ -746,16 +766,19 @@ async def _launch_plan_pass(
         async with semaphore:
             if pause_event.is_set():
                 return WorkerOutcome(agent=agent, payload=None, state="deferred")
-            live.start_agent(agent.name, f"{agent.model} · attempt {first_attempt}")
+            live.start_agent(agent.name, f"{effective_agent.model} · attempt {first_attempt}")
             available_attempts = remaining_attempts.get(agent.name, 0)
             for attempt in range(first_attempt, first_attempt + available_attempts):
                 if pause_event.is_set():
                     break
                 attempt_path = agent_attempts_dir / f"attempt-{attempt}.json"
-                live.update_agent(agent.name, f"{agent.model} · attempt {attempt} starting")
+                live.update_agent(
+                    agent.name,
+                    f"{effective_agent.model} · attempt {attempt} starting",
+                )
                 last = await execute_agent(
                     root=root,
-                    agent=agent,
+                    agent=effective_agent,
                     task=plan.task,
                     campaign_prompt=campaign_prompt,
                     output_path=attempt_path,
@@ -840,6 +863,14 @@ async def _launch_plan_pass(
         "estimated_total_cost_usd": round(sum(known_costs), 6),
         "results_dir": str(results_dir),
         "attempts_dir": str(attempts_root),
+        "recovery_overrides_path": (
+            str(plan.run_dir / "recovery-overrides.json") if recovery_overrides else None
+        ),
+        "configured_recovery_overrides": len(recovery_overrides),
+        "applied_recovery_overrides": [
+            applied_recovery_overrides[name]
+            for name in sorted(applied_recovery_overrides)
+        ],
         "pause": dict(pause_failure) if pause_failure is not None else None,
     }
     progress.update({
@@ -855,6 +886,11 @@ async def _launch_plan_pass(
         "failed_agents": failed_agents,
         "deferred_agents": deferred_agents,
         "report_status_counts": report_status_counts,
+        "configured_recovery_overrides": len(recovery_overrides),
+        "applied_recovery_overrides": [
+            applied_recovery_overrides[name]
+            for name in sorted(applied_recovery_overrides)
+        ],
         "pause": dict(pause_failure) if pause_failure is not None else None,
     })
     atomic_json(progress_path, progress)

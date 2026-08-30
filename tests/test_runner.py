@@ -1116,6 +1116,69 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(progress["report_status_counts"], {"contract-error": 1})
             self.assertTrue(final["report_contract_errors"])
 
+    async def test_run_local_recovery_overrides_apply_only_to_failed_results(self):
+        agents = tuple(load_agents(WORKSPACE)[:2])
+        failed_agent, successful_agent = agents
+        calls = []
+
+        async def fake_execute_agent(**kwargs):
+            calls.append(kwargs["agent"])
+            return fake_payload(kwargs["agent"], kwargs["attempt"], success=True, cost=0.1)
+
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "recovery-override-run"
+            failed_path = run_dir / "results" / f"{failed_agent.name}.json"
+            successful_path = run_dir / "results" / f"{successful_agent.name}.json"
+            failed_payload = fake_payload(failed_agent, 1, success=False, cost=0.1)
+            successful_payload = fake_payload(successful_agent, 1, success=True, cost=0.1)
+            atomic_json(failed_path, failed_payload)
+            atomic_json(successful_path, successful_payload)
+            atomic_json(run_dir / "recovery-overrides.json", {
+                "version": 1,
+                "run_id": run_dir.name,
+                "overrides": {
+                    failed_agent.name: {
+                        "model": "sonnet",
+                        "max_turns": 28,
+                        "reason": "failed writer recovery",
+                    },
+                    successful_agent.name: {
+                        "model": "sonnet",
+                        "max_turns": 28,
+                        "reason": "must remain unused for a qualified result",
+                    },
+                },
+            })
+            plan = LaunchPlan(
+                agents=agents,
+                task="Synthetic run-local recovery override test",
+                concurrency=2,
+                per_agent_budget_usd=0.5,
+                retries=0,
+                aggregate_ceiling_usd=1.0,
+                run_dir=run_dir,
+            )
+
+            with patch("wizengamot.runner.execute_agent", side_effect=fake_execute_agent):
+                summary = await launch_plan(
+                    root=WORKSPACE,
+                    plan=plan,
+                    campaign_name=None,
+                    campaign_prompt=None,
+                    skip_existing=False,
+                )
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0].name, failed_agent.name)
+            self.assertEqual(calls[0].model, "sonnet")
+            self.assertEqual(calls[0].max_turns, 28)
+            self.assertEqual(json.loads(successful_path.read_text()), successful_payload)
+            self.assertEqual(summary["configured_recovery_overrides"], 2)
+            self.assertEqual(
+                [item["agent_name"] for item in summary["applied_recovery_overrides"]],
+                [failed_agent.name],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
